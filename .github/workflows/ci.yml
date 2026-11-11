@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS · ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: macos-15, arch: arm64}
+          - {runner: macos-15-intel, arch: x64}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: swift test
+      - run: python3 scripts/test-process-recovery.py
+      - run: |
+          ./scripts/build-macos.sh
+          codesign --verify --strict dist/MySafeAI.app
+          ditto -c -k --keepParent dist/MySafeAI.app "dist/MySafeAI-macOS-${{ matrix.arch }}.zip"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/MySafeAI-macOS-${{ matrix.arch }}.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+  portable:
+    name: ${{ matrix.platform }} · ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: windows-2025, platform: Windows, arch: x64, bin: mysafeai.exe}
+          - {runner: windows-11-arm, platform: Windows, arch: arm64, bin: mysafeai.exe}
+          - {runner: ubuntu-24.04, platform: Linux, arch: x64, bin: mysafeai}
+          - {runner: ubuntu-24.04-arm, platform: Linux, arch: arm64, bin: mysafeai}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+        working-directory: portable
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: portable/go.sum
+      - name: Test the policy and process control
+        run: |
+          go vet ./...
+          go test -v ./...
+      - name: Build and smoke test
+        run: |
+          mkdir -p ../dist/package
+          go build -trimpath -o "../dist/package/${{ matrix.bin }}" .
+          "../dist/package/${{ matrix.bin }}" --help
+          cp ../LICENSE ../README.md ../dist/package/
+      - name: Archive Linux binary
+        if: runner.os == 'Linux'
+        run: tar -czf "../dist/MySafeAI-Linux-${{ matrix.arch }}.tar.gz" -C ../dist/package mysafeai LICENSE README.md
+      - name: Archive Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path ../dist/package/* -DestinationPath "../dist/MySafeAI-Windows-${{ matrix.arch }}.zip"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/MySafeAI-${{ matrix.platform }}-${{ matrix.arch }}.*
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
