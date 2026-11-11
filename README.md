@@ -81,7 +81,7 @@ mysafeai run -- codex
 
 ## Собрать и открыть
 
-Нужны macOS 14 или новее и Swift 6 из Xcode 16 или новее.
+Для запуска нужна macOS 14 или новее. CI собирает приложение с Xcode 26.3.
 
 ```sh
 swift test
