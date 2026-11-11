@@ -26,4 +26,5 @@ install -m 644 scripts/Info.plist "$app/Contents/Info.plist"
 install -m 644 "$icon_build/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 install -m 644 "$icon_build/AppIcon.iconset/icon_256x256.png" "$PWD/dist/MySafeAI-logo.png"
 codesign --force --sign - "$app"
+touch "$app" # Invalidate Finder's cached icon when rebuilding in place.
 printf '%s\n' "$app"

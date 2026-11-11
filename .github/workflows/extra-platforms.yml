@@ -44,7 +44,7 @@ jobs:
         run: |
           install -m 755 scripts/test-desktop-tray.sh /tmp/mysafeai-tray-check
           status=0
-          runuser -u builder -- xvfb-run -a dbus-run-session -- /tmp/mysafeai-tray-check /usr/bin/mysafeai /tmp/mysafeai-arch.png || status=$?
+          runuser -u builder -- xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- /tmp/mysafeai-tray-check /usr/bin/mysafeai /tmp/mysafeai-arch.png || status=$?
           if [ -f /tmp/mysafeai-arch.png ]; then
             install -m 644 /tmp/mysafeai-arch.png dist/mysafeai-arch.png
           fi

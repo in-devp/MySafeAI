@@ -11,6 +11,10 @@ cleanup() {
     status=$?
     if [ "$status" -ne 0 ]; then
         cat "$test_dir/app.log" "$test_dir/panel.log" "$test_dir/wm.log" 2>/dev/null || :
+        if window_visible; then
+            xdotool getdisplaygeometry
+            xdotool getwindowgeometry "$(window_id)"
+        fi
         if [ -n "$screenshot" ] && window_visible; then
             import -window "$(window_id)" "$screenshot" || :
         fi
@@ -128,16 +132,13 @@ height=$(printf '%s\n' "$dimensions" | sed -n 's/^HEIGHT=//p')
 xdotool mousemove --window "$window" "$((width - 59))" "$((height - 28))" click 1
 sleep 0.4
 xdotool key --delay 100 Shift+Tab Shift+Tab Shift+Tab Shift+Tab space
-if [ "$(uname -s)" = Linux ] && window_visible; then
-    # GTK's client-side decorations shift the contents below the native title.
-    for y in 123 135 147 159 171; do
-        xdotool mousemove --window "$window" 62 "$y" click 1
-        sleep 0.2
-        if window_hidden; then break; fi
-    done
-fi
 wait_for window_hidden
 grep -q '"trayOnly":true' "$XDG_CONFIG_HOME/MySafeAI/window.json"
+if [ -n "$screenshot" ]; then
+    activate_item
+    wait_for window_visible
+    import -window "$(window_id)" "$screenshot"
+fi
 kill -INT "$app_pid"
 wait "$app_pid"
 app_pid=
@@ -151,9 +152,6 @@ wait_for window_visible
 printf 'Tray-only setting persisted and the next launch started hidden\n'
 
 window=$(window_id)
-if [ -n "$screenshot" ]; then
-    import -window "$window" "$screenshot"
-fi
 xdotool windowactivate --sync "$window"
 xdotool key alt+F4
 wait_for window_hidden

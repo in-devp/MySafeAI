@@ -82,11 +82,15 @@ final class MySafeAIApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
             showDesktopWindow()
             Task { @MainActor in
                 guard self.desktopWindow?.isVisible == true, NSApp.activationPolicy() == .regular else { exit(1) }
+                let finderIcon = NSWorkspace.shared.icon(forFile: Bundle.main.bundlePath)
                 guard let expected = self.iconCenter(self.applicationIcon),
-                      let installed = self.iconCenter(NSApp.applicationIconImage),
-                      abs(installed.blueComponent - expected.blueComponent) < 0.06,
-                      abs(installed.redComponent - expected.redComponent) < 0.06 else {
-                    print("The Dock did not load the MySafeAI icon")
+                      let dock = self.iconCenter(NSApp.applicationIconImage),
+                      let finder = self.iconCenter(finderIcon),
+                      [dock, finder].allSatisfy({
+                          abs($0.blueComponent - expected.blueComponent) < 0.06 &&
+                              abs($0.redComponent - expected.redComponent) < 0.06
+                      }) else {
+                    print("The Dock or Finder did not load the MySafeAI icon")
                     exit(1)
                 }
                 self.setTrayOnly(true)
