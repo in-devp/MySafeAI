@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"strings"
 )
 
 var noRoute = errors.New("no route")
@@ -25,13 +24,6 @@ type config struct {
 	BlockOutsideDNS bool                         `json:"blockOutsideDNS,omitempty"`
 	ObserveDNS      bool                         `json:"observeDNS,omitempty"`
 	Notifications   bool                         `json:"notifications,omitempty"`
-}
-
-func (c config) validate() error {
-	if strings.TrimSpace(c.Adapter) == "" {
-		return errors.New("select your VPN adapter")
-	}
-	return c.validatePolicy()
 }
 
 func (c config) allows(ip netip.Addr) bool {
@@ -73,6 +65,10 @@ func routes(ctx context.Context, adapter string) (bool, error) {
 			return false, fmt.Errorf("IPv4 uses %s instead of %s", actual, adapter)
 		}
 	}
+	return ipv6Tunnel(ctx, adapter)
+}
+
+func ipv6Tunnel(ctx context.Context, adapter string) (bool, error) {
 	available := false
 	for _, ip := range anchors6 {
 		actual, err := routeFor(ctx, ip)

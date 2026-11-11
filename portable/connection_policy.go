@@ -23,6 +23,7 @@ type appConnectionRule struct {
 	Allowed      []string       `json:"allowed"`
 	Countries    []string       `json:"countries"`
 	TrustedLocal *bool          `json:"trustedLocal,omitempty"`
+	Host         string         `json:"host,omitempty"`
 }
 
 type trustedNetwork struct {
@@ -35,6 +36,22 @@ type sourcePreference struct {
 	Name string `json:"name"`
 	URL  string `json:"url"`
 	IPv6 bool   `json:"ipv6,omitempty"`
+}
+
+func (c config) commandTargets(command []string) []string {
+	var ids []string
+	if preset := presetForProcess(appProcess{Executable: command[0], Arguments: command}); preset != "" {
+		ids = append(ids, preset)
+	}
+	for _, target := range c.CustomTargets {
+		if matchesExecutable(target.Executable, command[0]) {
+			ids = append(ids, target.ID)
+		}
+	}
+	if len(ids) == 0 {
+		ids = []string{"managed"}
+	}
+	return ids
 }
 
 func validateAddresses(values []string) error {
@@ -100,11 +117,14 @@ func (c config) validatePolicy() error {
 		switch rule.Mode {
 		case "", fullTunnel:
 		case serviceTunnel, systemProxy:
-			if len(serviceHosts(id)) == 0 || (rule.Mode == systemProxy && (id == "codex-cli" || id == "claude-code")) {
+			if id == "managed" || len(serviceHosts(id, rule.Host)) == 0 || (rule.Mode == systemProxy && (id == "codex-cli" || id == "claude-code")) {
 				return fmt.Errorf("connection mode %s is unavailable for %s", rule.Mode, id)
 			}
 		default:
 			return fmt.Errorf("unknown connection mode: %s", rule.Mode)
+		}
+		if rule.Host != "" && !validServiceHost(rule.Host) {
+			return fmt.Errorf("invalid service domain for %s", id)
 		}
 		if err := errors.Join(validateAddresses(rule.Allowed), validateCountries(rule.Countries)); err != nil {
 			return fmt.Errorf("rule for %s: %w", id, err)
@@ -162,15 +182,40 @@ func (c config) activeTargets() []appTarget {
 	return slices.DeleteFunc(targets, func(target appTarget) bool { return !slices.Contains(c.Targets, target.ID) })
 }
 
-func serviceHosts(id string) []string {
+func serviceHosts(id string, host string) []string {
+	var hosts []string
 	switch id {
-	case "codex-cli", "codex-desktop", "chatgpt":
-		return []string{"chatgpt.com", "api.openai.com"}
+	case "codex-cli":
+		hosts = []string{"chatgpt.com", "api.openai.com"}
+	case "codex-desktop", "chatgpt":
+		hosts = []string{"chatgpt.com", "ws.chatgpt.com", "api.openai.com"}
 	case "claude-code", "claude-desktop":
-		return []string{"claude.ai", "api.anthropic.com"}
+		hosts = []string{"claude.ai", "api.anthropic.com"}
 	case "cursor":
-		return []string{"api2.cursor.sh"}
-	default:
-		return nil
+		hosts = []string{"api2.cursor.sh"}
 	}
+	if host != "" && !slices.Contains(hosts, host) {
+		hosts = append(hosts, host)
+	}
+	return hosts
+}
+
+func validServiceHost(host string) bool {
+	if len(host) > 253 || !strings.Contains(host, ".") {
+		return false
+	}
+	if _, err := netip.ParseAddr(host); err == nil {
+		return false
+	}
+	for label := range strings.SplitSeq(host, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for _, letter := range []byte(label) {
+			if (letter < 'a' || letter > 'z') && (letter < '0' || letter > '9') && letter != '-' {
+				return false
+			}
+		}
+	}
+	return true
 }

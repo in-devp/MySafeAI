@@ -13,7 +13,7 @@ mkdir -p "$root/DEBIAN" "$root/usr/bin" "$root/usr/share/applications"     "$roo
 arch=$(dpkg --print-architecture)
 cat > "$root/DEBIAN/control" <<CONTROL
 Package: mysafeai
-Version: 0.1.0
+Version: 0.2.0
 Architecture: $arch
 Maintainer: MySafeAI contributors <36034823+in-devp@users.noreply.github.com>
 Section: net

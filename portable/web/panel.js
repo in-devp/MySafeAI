@@ -89,7 +89,7 @@ async function refresh(first = false) {
     currentSources = state.sources || [];
     const adapters = new Set(state.adapters || []);
     if (state.config.adapter) adapters.add(state.config.adapter);
-    get("adapter").replaceChildren(new Option("Выберите адаптер", ""), ...[...adapters].map((name) => new Option(name, name)));
+    get("adapter").replaceChildren(new Option("Определять VPN автоматически", ""), ...[...adapters].map((name) => new Option(name, name)));
     get("adapter").value = state.config.adapter || "";
     get("allowed").value = (state.config.allowed || []).join("\n");
     get("countries").value = (state.config.countries || []).join(", ");
@@ -205,11 +205,13 @@ function showCustomSources() {
 function showAppRule() {
   const id = get("app-rule-target").value;
   const rule = currentConfig.rules?.[id] || {};
-  const hasServices = id !== "managed" && !id.startsWith("custom-");
+  const hasServices = id !== "managed";
   const isCLI = id === "codex-cli" || id === "claude-code";
   get("app-rule-mode").value = rule.mode || "tunnel";
   get("app-rule-mode").querySelector('[value="service"]').disabled = !hasServices;
   get("app-rule-mode").querySelector('[value="proxy"]').disabled = !hasServices || isCLI;
+  get("app-rule-host").value = rule.host || "";
+  get("app-rule-host").disabled = !hasServices;
   get("app-rule-override").checked = rule.allowed != null || rule.countries != null;
   get("app-rule-ips").value = (rule.allowed || []).join("\n");
   get("app-rule-countries").value = (rule.countries || []).join(", ");
@@ -303,11 +305,6 @@ get("adapter").addEventListener("change", () => {
   get("policy-result").textContent = "";
 });
 async function checkRoute() {
-  if (!policy().adapter) {
-    showPage("policy");
-    get("adapter").focus();
-    return;
-  }
   display(await request("check", policy()));
   if (verified.length) showPage("policy");
 }
@@ -324,7 +321,8 @@ action("save", async () => {
 get("app-rule-target").addEventListener("change", showAppRule);
 get("app-rule-override").addEventListener("change", toggleRuleFields);
 action("save-app-rule", async () => {
-  const rule = { mode: get("app-rule-mode").value, trustedLocal: get("app-rule-local").checked };
+  const rule = { mode: get("app-rule-mode").value, trustedLocal: get("app-rule-local").checked,
+    host: get("app-rule-host").value.trim().toLowerCase() };
   if (get("app-rule-override").checked) {
     rule.allowed = words(get("app-rule-ips").value);
     rule.countries = words(get("app-rule-countries").value.toUpperCase());
@@ -402,6 +400,10 @@ action("approve-ip", () => answerApproval(true));
 action("decline-ip", () => answerApproval(false));
 action("leak-check", async () => {
   const result = await request("diagnostics", {});
+  if (result.changed) {
+    get("leak-result").hidden = true;
+    throw new Error("Сеть изменилась во время проверки. Повторите проверку.");
+  }
   const dns = { tunnel: "Через выбранный VPN", outside: "Есть путь вне VPN", unknown: "Маршрут неизвестен" };
   const proxy = { proxy: "Используется", direct: "Прямое соединение", unknown: "Не подтверждён" };
   const external = { disabled: "Выключен", unconfirmed: "Резолверы не подтверждены", observed: "Резолверы получены" };

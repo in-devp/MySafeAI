@@ -16,6 +16,65 @@ static const char *icon_dir;
 static gint tray_available;
 static gboolean start_hidden;
 static gboolean primary_desktop;
+static GtkNativeDialog *picker_dialog;
+static GAsyncQueue *picker_queue;
+static char picker_cancelled;
+
+static void free_picker_result(gpointer item) {
+    if (item != &picker_cancelled) {
+        g_free(item);
+    }
+}
+
+static void finish_picker(char *path) {
+    if (!picker_queue) {
+        g_free(path);
+        return;
+    }
+    g_signal_handlers_disconnect_by_data(picker_dialog, picker_queue);
+    gtk_native_dialog_destroy(picker_dialog);
+    g_object_unref(picker_dialog);
+    picker_dialog = NULL;
+    g_async_queue_push(picker_queue, path ? path : &picker_cancelled);
+    g_async_queue_unref(picker_queue);
+    picker_queue = NULL;
+}
+
+static void picker_response(GtkNativeDialog *dialog, int response, gpointer unused) {
+    char *path = NULL;
+    if (response == GTK_RESPONSE_ACCEPT) {
+        GFile *file = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(dialog));
+        if (file) {
+            path = g_file_get_path(file);
+            g_object_unref(file);
+        }
+    }
+    finish_picker(path);
+}
+
+static gboolean open_picker(gpointer data) {
+    GAsyncQueue *queue = data;
+    if (!desktop_window || picker_queue) {
+        g_async_queue_push(queue, &picker_cancelled);
+        g_async_queue_unref(queue);
+        return G_SOURCE_REMOVE;
+    }
+    picker_queue = queue;
+    picker_dialog = GTK_NATIVE_DIALOG(gtk_file_chooser_native_new("Выбрать программу", desktop_window,
+        GTK_FILE_CHOOSER_ACTION_OPEN, "Выбрать", "Отмена"));
+    g_signal_connect(picker_dialog, "response", G_CALLBACK(picker_response), queue);
+    gtk_native_dialog_set_modal(picker_dialog, TRUE);
+    gtk_native_dialog_show(picker_dialog);
+    return G_SOURCE_REMOVE;
+}
+
+static char *pick_program(void) {
+    GAsyncQueue *queue = g_async_queue_new_full(free_picker_result);
+    g_idle_add(open_picker, g_async_queue_ref(queue));
+    gpointer result = g_async_queue_timeout_pop(queue, 90 * G_TIME_SPAN_SECOND);
+    g_async_queue_unref(queue);
+    return result == &picker_cancelled ? NULL : result;
+}
 
 static gboolean decide_navigation(WebKitWebView *view, WebKitPolicyDecision *decision,
                                   WebKitPolicyDecisionType type, gpointer unused) {
@@ -93,6 +152,7 @@ static gboolean restore_without_tray(gpointer unused) {
 
 static gboolean quit_desktop(gpointer unused) {
     if (desktop_app) {
+        finish_picker(NULL);
         g_application_quit(G_APPLICATION(desktop_app));
     }
     return G_SOURCE_REMOVE;
@@ -119,6 +179,7 @@ static int run_desktop(const char *url, const char *icons, gboolean hidden) {
     desktop_app = gtk_application_new("app.mysafeai.desktop", G_APPLICATION_DEFAULT_FLAGS);
     g_signal_connect(desktop_app, "activate", G_CALLBACK(activate), NULL);
     int status = g_application_run(G_APPLICATION(desktop_app), 0, NULL);
+    finish_picker(NULL);
     g_object_unref(desktop_app);
     desktop_app = NULL;
     desktop_url = NULL;
@@ -186,6 +247,14 @@ func runDesktop(parent context.Context, s storage, smoke bool) error {
 	var ready atomic.Bool
 	ui := &panel{storage: s, ctx: ctx, running: make(map[string]session), token: secret(),
 		smoke: smoke, tray: hasTray.Load, trayOnly: trayOnly, hide: func() { C.request_hide() }}
+	ui.pick = func() (string, error) {
+		path := C.pick_program()
+		if path == nil {
+			return "", nil
+		}
+		defer C.g_free(C.gpointer(unsafe.Pointer(path)))
+		return C.GoString(path), nil
+	}
 	defer func() {
 		cancel()
 		if C.was_primary_desktop() == 0 {

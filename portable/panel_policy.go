@@ -283,9 +283,6 @@ func (p *panel) updateApproval(w http.ResponseWriter, r *http.Request) {
 			return errors.New("the policy changed during the check")
 		}
 		if pending.Target == "global" {
-			if c.Adapter == "" {
-				c.Adapter = pending.Adapter
-			}
 			c.Allowed = appendUnique(c.Allowed, fresh.IPs...)
 		} else {
 			if c.Rules == nil {

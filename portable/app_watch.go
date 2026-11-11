@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"runtime"
 	"slices"
 	"sort"
 	"sync"
@@ -42,8 +41,10 @@ type watchStatus struct {
 }
 
 type processBackend struct {
-	list   func() ([]appProcess, error)
-	signal func(appProcessKey, appProcessAction) error
+	list    func() ([]appProcess, error)
+	signal  func(appProcessKey, appProcessAction) error
+	threads func(appProcessKey) []appThreadLease
+	adopt   func(appProcessKey, []appThreadLease) error
 }
 
 type policyProof struct {
@@ -57,12 +58,14 @@ type proofBatch struct {
 }
 
 type pauseRecord struct {
-	Key     appProcessKey `json:"key"`
-	Targets []string      `json:"targets"`
-	Depth   int           `json:"depth"`
-	Started time.Time     `json:"started"`
-	Closing time.Time     `json:"closing,omitempty"`
-	Phase   string        `json:"phase"`
+	Key        appProcessKey    `json:"key"`
+	Targets    []string         `json:"targets"`
+	Depth      int              `json:"depth"`
+	Started    time.Time        `json:"started"`
+	Closing    time.Time        `json:"closing,omitempty"`
+	Phase      string           `json:"phase"`
+	Threads    []appThreadLease `json:"threads,omitempty"`
+	WasTrusted bool             `json:"wasTrusted,omitempty"`
 }
 
 type appWatch struct {
@@ -94,11 +97,20 @@ func newAppWatch(s storage, backend processBackend, reveal func()) *appWatch {
 			if lease.Key.PID <= 1 || lease.Key.Started == 0 || len(lease.Targets) == 0 {
 				continue
 			}
-			if runtime.GOOS == "windows" || lease.Phase != "owned" {
+			if lease.Phase != "owned" {
 				lease.Phase = "uncertain"
+			} else if backend.adopt != nil {
+				err := backend.adopt(lease.Key, lease.Threads)
+				if errors.Is(err, os.ErrProcessDone) {
+					continue
+				}
+				if err != nil {
+					lease.Phase = "uncertain"
+				}
 			}
 			w.pauses[lease.Key] = lease
 			w.remembered[lease.Key] = watchedProcess{appProcess: appProcess{Key: lease.Key}, targets: lease.Targets, depth: lease.Depth}
+			w.ranTrusted[lease.Key] = lease.WasTrusted
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		w.recoveryErr = err
@@ -118,16 +130,30 @@ func (w *appWatch) savePauses() error {
 	return w.storage.saveJSON("observer-pauses.json", records)
 }
 
+func (w *appWatch) threadLeases(key appProcessKey) []appThreadLease {
+	if w.backend.threads == nil {
+		return nil
+	}
+	return w.backend.threads(key)
+}
+
 func (w *appWatch) run(ctx context.Context) {
 	tick := time.NewTicker(650 * time.Millisecond)
 	defer tick.Stop()
-	defer w.releaseAll()
 	events := connectionEvents(ctx)
 	batches := make(chan proofBatch, 1)
 	checking := false
 	nextProof := time.Time{}
+	var previousWall int64
 	for {
 		now := time.Now()
+		wall := now.UnixNano()
+		if previousWall != 0 && (wall-previousWall > int64(4*time.Second) || wall < previousWall) {
+			w.generation++
+			w.proofs = make(map[string]policyProof)
+			nextProof = time.Time{}
+		}
+		previousWall = wall
 		c, err := w.storage.load()
 		key := policyFingerprint(c)
 		if err != nil {
@@ -142,7 +168,7 @@ func (w *appWatch) run(ctx context.Context) {
 			}
 		}
 		targets := w.policy.activeTargets()
-		if len(targets) == 0 {
+		if len(targets) == 0 && err == nil {
 			w.releaseAll()
 			w.status.Store(&watchStatus{State: "off"})
 		} else {
@@ -270,6 +296,11 @@ func (w *appWatch) reconcile(ctx context.Context, now time.Time, targets []appTa
 	for _, item := range current {
 		active[item.Key] = true
 		lease := w.pauses[item.Key]
+		if !lease.Started.IsZero() && !slices.Equal(lease.Targets, item.targets) && configErr == nil {
+			lease.Targets = item.targets
+			w.pauses[item.Key] = lease
+			_ = w.savePauses()
+		}
 		allowed := configErr == nil && w.targetsTrusted(item.targets) && lease.Closing.IsZero() && lease.Phase != "uncertain"
 		if allowed {
 			w.ranTrusted[item.Key] = true
@@ -301,7 +332,21 @@ func (w *appWatch) reconcile(ctx context.Context, now time.Time, targets []appTa
 			delete(w.ranTrusted, key)
 		}
 	}
-	w.releaseAllowed(active, present, &status)
+	if configErr == nil {
+		w.releaseAllowed(active, present, &status)
+	}
+	for key, lease := range w.pauses {
+		if !active[key] {
+			continue
+		}
+		for _, id := range lease.Targets {
+			app := byTarget[id]
+			if app.State == "protected" {
+				app.State = "paused"
+				byTarget[id] = app
+			}
+		}
+	}
 	for _, target := range targets {
 		if app, ok := byTarget[target.ID]; ok {
 			status.Apps = append(status.Apps, app)
@@ -395,7 +440,8 @@ func (w *appWatch) pause(now time.Time, item watchedProcess, status *watchStatus
 		return
 	}
 	if !owned {
-		lease = pauseRecord{Key: item.Key, Targets: item.targets, Depth: item.depth, Started: now, Phase: "staging"}
+		lease = pauseRecord{Key: item.Key, Targets: item.targets, Depth: item.depth, Started: now,
+			Phase: "staging", WasTrusted: w.ranTrusted[item.Key]}
 		w.pauses[item.Key] = lease
 		if err := w.savePauses(); err != nil {
 			delete(w.pauses, item.Key)
@@ -405,7 +451,13 @@ func (w *appWatch) pause(now time.Time, item watchedProcess, status *watchStatus
 	}
 	if err := w.backend.signal(item.Key, appPause); err != nil {
 		if !owned {
-			delete(w.pauses, item.Key)
+			lease.Threads = w.threadLeases(item.Key)
+			if len(lease.Threads) == 0 {
+				delete(w.pauses, item.Key)
+			} else {
+				lease.Phase = "owned"
+				w.pauses[item.Key] = lease
+			}
 			_ = w.savePauses()
 		}
 		if !errors.Is(err, os.ErrProcessDone) && !errors.Is(err, errAppProcessAlreadyStopped) {
@@ -415,11 +467,16 @@ func (w *appWatch) pause(now time.Time, item watchedProcess, status *watchStatus
 	}
 	if !owned {
 		lease.Phase = "owned"
+		lease.Threads = w.threadLeases(item.Key)
 		w.pauses[item.Key] = lease
 		if err := w.savePauses(); err != nil {
 			status.State, status.Message = "failed", "Не удалось подтвердить запись о паузе."
 		}
 		w.storage.event("На паузе · " + executableBase(item.Executable))
+	} else if threads := w.threadLeases(item.Key); !slices.Equal(threads, lease.Threads) {
+		lease.Threads = threads
+		w.pauses[item.Key] = lease
+		_ = w.savePauses()
 	}
 }
 
@@ -451,6 +508,7 @@ func (w *appWatch) releaseAllowed(active, present map[appProcessKey]bool, status
 		}
 		if err := w.backend.signal(lease.Key, appResume); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			lease.Phase = "owned"
+			lease.Threads = w.threadLeases(lease.Key)
 			w.pauses[lease.Key] = lease
 			changed = true
 			status.State, status.Message = "failed", "Не удалось возобновить приложение."

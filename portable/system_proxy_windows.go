@@ -31,8 +31,9 @@ const (
 	winProxyRequestError        = 0x00200000
 	winProxyLookupComplete      = 0x01000000
 	winProxyAutoDetectionFailed = syscall.Errno(12180)
-	winProxySchemeHTTP          = 3
-	winProxySchemeHTTPS         = 4
+	// WINHTTP_PROXY_RESULT_ENTRY uses the INTERNET_SCHEME values in winhttp.h.
+	winProxySchemeHTTP  = 1
+	winProxySchemeHTTPS = 2
 )
 
 var (
@@ -237,7 +238,7 @@ func firstWinProxy(entry winProxyEntry) (*url.URL, error) {
 	default:
 		// WinHTTP's SOCKS result does not identify the version. Go's transport
 		// only speaks SOCKS5, so do not guess or switch to a later route.
-		return nil, errors.New("automatic proxy selected an unsupported protocol")
+		return nil, fmt.Errorf("automatic proxy selected unsupported protocol %d", entry.scheme)
 	}
 	host := windows.UTF16PtrToString(entry.host)
 	if host == "" {

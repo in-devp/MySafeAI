@@ -46,14 +46,23 @@ func TestWindowsManualProxyDecision(t *testing.T) {
 
 func TestWindowsAutomaticProxyDecision(t *testing.T) {
 	host, _ := windows.UTF16PtrFromString("::1")
-	proxy, err := firstWinProxy(winProxyEntry{proxy: 1, scheme: winProxySchemeHTTPS, host: host, port: 8443})
-	if err != nil || proxy == nil || proxy.String() != "https://[::1]:8443" {
-		t.Fatalf("unexpected HTTPS proxy: %v", err)
+	// Use the WinHTTP SDK's native values independently of the Go constants.
+	for _, test := range []struct {
+		scheme int32
+		want   string
+	}{
+		{1, "http://[::1]:8443"},
+		{2, "https://[::1]:8443"},
+	} {
+		proxy, err := firstWinProxy(winProxyEntry{proxy: 1, scheme: test.scheme, host: host, port: 8443})
+		if err != nil || proxy == nil || proxy.String() != test.want {
+			t.Fatalf("unexpected result for WinHTTP scheme %d: %v", test.scheme, err)
+		}
 	}
 	if proxy, err := firstWinProxy(winProxyEntry{bypass: 1}); proxy != nil || err != nil {
 		t.Fatalf("bypassed route: %v", err)
 	}
-	if proxy, err := firstWinProxy(winProxyEntry{proxy: 1, scheme: 8, host: host}); proxy != nil || err == nil {
+	if proxy, err := firstWinProxy(winProxyEntry{proxy: 1, scheme: 4, host: host}); proxy != nil || err == nil {
 		t.Fatal("unknown SOCKS version accepted")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"runtime"
+	"sort"
 	"sync"
 	"unsafe"
 
@@ -14,7 +15,10 @@ import (
 
 var (
 	appIsProcessCritical = kernel32.NewProc("IsProcessCritical")
-	appQueryProcess      = windows.NewLazySystemDLL("ntdll.dll").NewProc("NtQueryInformationProcess")
+	appGetThreadTimes    = kernel32.NewProc("GetThreadTimes")
+	appNTDLL             = windows.NewLazySystemDLL("ntdll.dll")
+	appQueryProcess      = appNTDLL.NewProc("NtQueryInformationProcess")
+	appQueryThread       = appNTDLL.NewProc("NtQueryInformationThread")
 	appUser32            = windows.NewLazySystemDLL("user32.dll")
 	appWindowOwner       = appUser32.NewProc("GetWindowThreadProcessId")
 	appPostMessage       = appUser32.NewProc("PostMessageW")
@@ -24,8 +28,14 @@ var (
 )
 
 type windowsAppPause struct {
-	threads  map[uint32]windows.Handle
+	threads  map[uint32]windowsAppThread
 	complete bool
+}
+
+type windowsAppThread struct {
+	handle    windows.Handle
+	lease     appThreadLease
+	recovered bool
 }
 
 type windowsAppOwner struct {
@@ -247,7 +257,7 @@ func controlAppProcess(key appProcessKey, action appProcessAction) error {
 
 	process, _, err := openWindowsAppProcess(key.PID, key.Started, owner, access)
 	if errors.Is(err, os.ErrProcessDone) {
-		closeHandles(appPauses[key].threads)
+		closeWindowsAppThreads(appPauses[key].threads)
 		delete(appPauses, key)
 	}
 	if err != nil {
@@ -285,8 +295,8 @@ func windowsAppStopped() map[appProcessKey]bool {
 	stopped := make(map[appProcessKey]bool, len(appPauses))
 	for key, pause := range appPauses {
 		for id, thread := range pause.threads {
-			if errors.Is(windowsAppAlive(thread), os.ErrProcessDone) {
-				_ = windows.CloseHandle(thread)
+			if errors.Is(windowsAppAlive(thread.handle), os.ErrProcessDone) {
+				_ = windows.CloseHandle(thread.handle)
 				delete(pause.threads, id)
 			}
 		}
@@ -302,9 +312,9 @@ func windowsAppStopped() map[appProcessKey]bool {
 func pauseWindowsApp(process windows.Handle, key appProcessKey) error {
 	pause := appPauses[key]
 	if pause.threads == nil {
-		pause.threads = make(map[uint32]windows.Handle)
+		pause.threads = make(map[uint32]windowsAppThread)
 	}
-	newThreads := make(map[uint32]windows.Handle)
+	newThreads := make(map[uint32]windowsAppThread)
 	err := suspendWindowsAppThreads(process, uint32(key.PID), pause.threads, newThreads)
 	if err == nil && len(pause.threads)+len(newThreads) == 0 {
 		err = windowsAppAlive(process)
@@ -327,7 +337,7 @@ func pauseWindowsApp(process windows.Handle, key appProcessKey) error {
 	return err
 }
 
-func suspendWindowsAppThreads(process windows.Handle, pid uint32, owned, added map[uint32]windows.Handle) error {
+func suspendWindowsAppThreads(process windows.Handle, pid uint32, owned, added map[uint32]windowsAppThread) error {
 	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPTHREAD, 0)
 	if err != nil {
 		return err
@@ -346,62 +356,260 @@ func suspendWindowsAppThreads(process windows.Handle, pid uint32, owned, added m
 			continue
 		}
 		if thread, ok := owned[entry.ThreadID]; ok {
-			if !errors.Is(windowsAppAlive(thread), os.ErrProcessDone) {
+			if !errors.Is(windowsAppAlive(thread.handle), os.ErrProcessDone) {
 				continue
 			}
-			_ = windows.CloseHandle(thread)
+			_ = windows.CloseHandle(thread.handle)
 			delete(owned, entry.ThreadID)
 		}
 
-		thread, err := windows.OpenThread(windows.THREAD_SUSPEND_RESUME|windows.THREAD_QUERY_LIMITED_INFORMATION|windows.SYNCHRONIZE,
-			false, entry.ThreadID)
-		if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
+		thread, err := openWindowsAppThread(pid, entry.ThreadID)
+		if errors.Is(err, os.ErrProcessDone) {
 			continue
 		}
 		if err != nil {
 			return err
 		}
-		owner, _, _ := threadOwner.Call(uintptr(thread))
-		if owner != uintptr(pid) {
-			_ = windows.CloseHandle(thread)
-			continue
-		}
 		if err := windowsAppAlive(process); err != nil {
-			_ = windows.CloseHandle(thread)
+			_ = windows.CloseHandle(thread.handle)
 			return err
 		}
-		count, _, err := suspendThread.Call(uintptr(thread))
+		count, _, err := suspendThread.Call(uintptr(thread.handle))
 		if uint32(count) == math.MaxUint32 {
-			dead := errors.Is(windowsAppAlive(thread), os.ErrProcessDone)
-			_ = windows.CloseHandle(thread)
+			dead := errors.Is(windowsAppAlive(thread.handle), os.ErrProcessDone)
+			_ = windows.CloseHandle(thread.handle)
 			if dead {
 				continue
 			}
 			return fmt.Errorf("SuspendThread: %w", err)
 		}
 		// Record one increment, including when another caller already holds a pause.
+		thread.lease.Count = uint32(count) + 1
 		added[entry.ThreadID] = thread
 	}
 }
 
-func resumeWindowsAppThreads(threads map[uint32]windows.Handle) error {
+func openWindowsAppThread(pid, id uint32) (windowsAppThread, error) {
+	thread, err := windows.OpenThread(windows.THREAD_SUSPEND_RESUME|windows.THREAD_QUERY_LIMITED_INFORMATION|windows.SYNCHRONIZE,
+		false, id)
+	if errors.Is(err, windows.ERROR_INVALID_PARAMETER) {
+		return windowsAppThread{}, os.ErrProcessDone
+	}
+	if err != nil {
+		return windowsAppThread{}, err
+	}
+	owner, _, _ := threadOwner.Call(uintptr(thread))
+	if owner != uintptr(pid) {
+		_ = windows.CloseHandle(thread)
+		return windowsAppThread{}, os.ErrProcessDone
+	}
+	if err := windowsAppAlive(thread); err != nil {
+		_ = windows.CloseHandle(thread)
+		return windowsAppThread{}, err
+	}
+	var creation, exit, kernel, user windows.Filetime
+	ok, _, err := appGetThreadTimes.Call(uintptr(thread),
+		uintptr(unsafe.Pointer(&creation)), uintptr(unsafe.Pointer(&exit)),
+		uintptr(unsafe.Pointer(&kernel)), uintptr(unsafe.Pointer(&user)))
+	if ok == 0 {
+		if errors.Is(windowsAppAlive(thread), os.ErrProcessDone) {
+			err = os.ErrProcessDone
+		}
+		_ = windows.CloseHandle(thread)
+		return windowsAppThread{}, err
+	}
+	started := uint64(creation.HighDateTime)<<32 | uint64(creation.LowDateTime)
+	if started == 0 {
+		_ = windows.CloseHandle(thread)
+		return windowsAppThread{}, errors.New("the thread has no creation time")
+	}
+	return windowsAppThread{handle: thread, lease: appThreadLease{ID: id, Started: started}}, nil
+}
+
+func closeWindowsAppThreads(threads map[uint32]windowsAppThread) {
+	for _, thread := range threads {
+		_ = windows.CloseHandle(thread.handle)
+	}
+}
+
+func windowsAppThreadSuspendCount(thread windows.Handle) (uint32, error) {
+	if err := appQueryThread.Find(); err != nil {
+		return 0, err
+	}
+	// ThreadSuspendCount (Windows 8.1+) reads the count without changing it.
+	// Win32 SuspendThread/ResumeThread cannot provide a read-only probe.
+	const threadSuspendCount = 35
+	var count uint32
+	status, _, _ := appQueryThread.Call(uintptr(thread), threadSuspendCount,
+		uintptr(unsafe.Pointer(&count)), unsafe.Sizeof(count), 0)
+	if status != 0 {
+		return 0, windows.NTStatus(status)
+	}
+	return count, nil
+}
+
+func appThreadLeases(key appProcessKey) []appThreadLease {
+	appPausesMu.Lock()
+	defer appPausesMu.Unlock()
+	threads := appPauses[key].threads
+	if len(threads) == 0 {
+		return nil
+	}
+	leases := make([]appThreadLease, 0, len(threads))
+	for _, thread := range threads {
+		if !errors.Is(windowsAppAlive(thread.handle), os.ErrProcessDone) {
+			leases = append(leases, thread.lease)
+		}
+	}
+	sort.Slice(leases, func(i, j int) bool { return leases[i].ID < leases[j].ID })
+	return leases
+}
+
+func adoptAppThreadLeases(key appProcessKey, leases []appThreadLease) error {
+	if key.PID == os.Getpid() || key.Started == 0 {
+		return os.ErrProcessDone
+	}
+	if len(leases) == 0 {
+		return errors.New("no Windows thread suspensions to recover")
+	}
+	owner, err := windowsAppOwnerForToken(windows.GetCurrentProcessToken())
+	if err != nil {
+		return err
+	}
+	appPausesMu.Lock()
+	defer appPausesMu.Unlock()
+	process, _, err := openWindowsAppProcess(key.PID, key.Started, owner, 0)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(process)
+
+	pause := appPauses[key]
+	recovered := make(map[uint32]windowsAppThread)
+	defer closeWindowsAppThreads(recovered)
+	seen := make(map[uint32]bool, len(leases))
+	for _, lease := range leases {
+		if lease.ID == 0 || lease.Started == 0 || lease.Count == 0 || seen[lease.ID] {
+			return errors.New("invalid or repeated Windows thread suspension record")
+		}
+		seen[lease.ID] = true
+		if thread, ok := pause.threads[lease.ID]; ok && !errors.Is(windowsAppAlive(thread.handle), os.ErrProcessDone) {
+			if thread.lease != lease {
+				return fmt.Errorf("conflicting Windows thread suspension record for thread %d", lease.ID)
+			}
+			if err := checkWindowsAppThreadCount(thread.handle, lease.Count); err != nil {
+				return fmt.Errorf("recover thread %d: %w", lease.ID, err)
+			}
+			continue
+		}
+		thread, err := reopenWindowsAppThread(uint32(key.PID), lease)
+		if errors.Is(err, os.ErrProcessDone) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("recover thread %d: %w", lease.ID, err)
+		}
+		recovered[lease.ID] = thread
+	}
+	if err := windowsAppAlive(process); err != nil {
+		return err
+	}
+	if len(recovered) != 0 {
+		if pause.threads == nil {
+			pause.threads = make(map[uint32]windowsAppThread, len(recovered))
+		}
+		for id, thread := range recovered {
+			if previous, ok := pause.threads[id]; ok {
+				_ = windows.CloseHandle(previous.handle)
+			}
+			pause.threads[id] = thread
+			delete(recovered, id)
+		}
+		// The old snapshot says nothing about threads created afterwards.
+		pause.complete = false
+		appPauses[key] = pause
+	}
+	return nil
+}
+
+func reopenWindowsAppThread(pid uint32, lease appThreadLease) (windowsAppThread, error) {
+	thread, err := openWindowsAppThread(pid, lease.ID)
+	if err != nil {
+		return windowsAppThread{}, err
+	}
+	if thread.lease.Started != lease.Started {
+		_ = windows.CloseHandle(thread.handle)
+		return windowsAppThread{}, os.ErrProcessDone
+	}
+	if err := checkWindowsAppThreadCount(thread.handle, lease.Count); err != nil {
+		_ = windows.CloseHandle(thread.handle)
+		return windowsAppThread{}, err
+	}
+	thread.lease = lease
+	thread.recovered = true
+	return thread, nil
+}
+
+func checkWindowsAppThreadCount(thread windows.Handle, expected uint32) error {
+	count, err := windowsAppThreadSuspendCount(thread)
+	if aliveErr := windowsAppAlive(thread); aliveErr != nil {
+		return aliveErr
+	}
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return os.ErrProcessDone
+	}
+	if count != expected {
+		return errors.New("suspend count differs from the recorded count")
+	}
+	return nil
+}
+
+func resumeWindowsAppThreads(threads map[uint32]windowsAppThread) error {
 	var resumeError error
 	for id, thread := range threads {
-		err := windowsAppAlive(thread)
-		if err == nil {
-			_, err = windows.ResumeThread(thread)
-			if err != nil && errors.Is(windowsAppAlive(thread), os.ErrProcessDone) {
-				err = os.ErrProcessDone
-			}
+		released, err := resumeWindowsAppThread(thread)
+		if released {
+			_ = windows.CloseHandle(thread.handle)
+			delete(threads, id)
 		}
 		if err != nil && !errors.Is(err, os.ErrProcessDone) {
 			resumeError = errors.Join(resumeError, fmt.Errorf("resume thread %d: %w", id, err))
-			continue
 		}
-		_ = windows.CloseHandle(thread)
-		delete(threads, id)
 	}
 	return resumeError
+}
+
+func resumeWindowsAppThread(thread windowsAppThread) (bool, error) {
+	if err := windowsAppAlive(thread.handle); err != nil {
+		return errors.Is(err, os.ErrProcessDone), err
+	}
+	if thread.recovered {
+		if err := checkWindowsAppThreadCount(thread.handle, thread.lease.Count); err != nil {
+			return errors.Is(err, os.ErrProcessDone), err
+		}
+	}
+	previous, err := windows.ResumeThread(thread.handle)
+	if err != nil {
+		if errors.Is(windowsAppAlive(thread.handle), os.ErrProcessDone) {
+			return true, nil
+		}
+		return false, err
+	}
+	if thread.recovered && previous != 0 && previous != thread.lease.Count {
+		// The kernel has no compare-and-resume operation. Restore the increment
+		// if a different controller changed the count between query and release.
+		failure := errors.New("suspend count changed during release")
+		restored, _, err := suspendThread.Call(uintptr(thread.handle))
+		if uint32(restored) == math.MaxUint32 {
+			// The decrement already happened. Do not attempt a second one later.
+			return true, errors.Join(failure, fmt.Errorf("restore suspend count: %w", err))
+		}
+		return false, failure
+	}
+	return true, nil
 }
 
 type windowsAppCloseRequest struct {

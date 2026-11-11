@@ -35,21 +35,53 @@ type streams struct {
 }
 
 type routeCheck struct {
-	verify func(context.Context, config) report
-	routes func(context.Context, string) (bool, error)
-	load   func() (config, error)
-	path   func(context.Context, config) (connectionPath, error)
+	verify           func(context.Context, config) report
+	routes           func(context.Context, string) (bool, error)
+	load             func() (config, error)
+	path             func(context.Context, config) (connectionPath, error)
+	monitorAvailable func() bool
 }
 
 func managedChecks(s storage) routeCheck {
-	return routeCheck{load: s.load}
+	return routeCheck{load: s.load, monitorAvailable: func() bool {
+		var beacon watchBeacon
+		return s.readJSON(watchBeaconFile, &beacon) == nil && validBeacon(beacon)
+	}}
 }
 
-func (checks routeCheck) scoped(target string) routeCheck {
-	checks.verify = func(ctx context.Context, c config) report { return verifyTarget(ctx, c, target) }
+func (checks routeCheck) scoped(command []string) routeCheck {
+	checks.verify = func(ctx context.Context, c config) report {
+		targets := c.commandTargets(command)
+		ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+		defer cancel()
+		results := make([]chan report, len(targets))
+		for index, id := range targets {
+			results[index] = make(chan report, 1)
+			go func() { results[index] <- verifyTarget(ctx, c, id) }()
+		}
+		proof := report{Trusted: true, Reason: "trusted route verified"}
+		var keys []string
+		for _, result := range results {
+			item := <-result
+			if !item.Trusted {
+				return item
+			}
+			keys = append(keys, item.routeKey)
+		}
+		proof.routeKey = strings.Join(keys, ":")
+		return proof
+	}
 	checks.path = func(ctx context.Context, c config) (connectionPath, error) {
-		effective, rule := c.forTarget(target)
-		return findConnectionPath(ctx, effective, rule.Mode, target)
+		var keys []string
+		for _, id := range c.commandTargets(command) {
+			effective, rule := c.forTarget(id)
+			path, err := findConnectionPath(ctx, effective, rule.Mode, id)
+			if err != nil {
+				return connectionPath{}, err
+			}
+			keys = append(keys, path.key)
+		}
+		return connectionPath{key: strings.Join(keys, ":")}, nil
 	}
 	return checks
 }
@@ -61,6 +93,35 @@ func (checks routeCheck) samePath(ctx context.Context, c config, proof report) (
 	}
 	ipv6, err := checks.routes(ctx, c.Adapter)
 	return err == nil && ipv6 == proof.IPv6, fmt.Sprint(err == nil, ipv6)
+}
+
+func (checks routeCheck) preflight(ctx context.Context, c config) (report, config) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	proof := checks.verify(ctx, c)
+	if checks.load == nil || checks.monitorAvailable == nil {
+		return proof, c
+	}
+	key, verifiedAt := policyFingerprint(c), time.Now()
+	ticker := time.NewTicker(650 * time.Millisecond)
+	defer ticker.Stop()
+	for !proof.Trusted && checks.monitorAvailable() {
+		select {
+		case <-ctx.Done():
+			return proof, c
+		case <-ticker.C:
+		}
+		latest, err := checks.load()
+		if err != nil {
+			continue
+		}
+		latestKey := policyFingerprint(latest)
+		if latestKey != key || time.Since(verifiedAt) >= 5*time.Second {
+			c, key = latest, latestKey
+			proof, verifiedAt = checks.verify(ctx, c), time.Now()
+		}
+	}
+	return proof, c
 }
 
 func secret() string {
@@ -108,25 +169,13 @@ func startManaged(ctx context.Context, args []string, c config, checks routeChec
 		if c, err = checks.load(); err != nil {
 			return 69, err
 		}
-		id := "managed"
-		for _, app := range c.CustomTargets {
-			if matchesExecutable(app.Executable, target[0]) {
-				id = app.ID
-				break
-			}
-		}
-		if id == "managed" {
-			if preset := presetForProcess(appProcess{Executable: target[0], Arguments: target}); preset != "" {
-				id = preset
-			}
-		}
-		checks = checks.scoped(id)
+		checks = checks.scoped(target)
 	}
-	policyKey := policyFingerprint(c)
-	proof := checks.verify(ctx, c)
+	proof, c := checks.preflight(ctx, c)
 	if !proof.Trusted {
 		return 69, errors.New(proof.Reason)
 	}
+	policyKey := policyFingerprint(c)
 	listener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
 		return 70, err
@@ -189,6 +238,12 @@ func startManaged(ctx context.Context, args []string, c config, checks routeChec
 	if !samePath {
 		return 69, errors.New("the route changed before launch")
 	}
+	if checks.load != nil {
+		current, err := checks.load()
+		if err != nil || policyFingerprint(current) != policyKey {
+			return 69, errors.New("the policy changed before launch")
+		}
+	}
 	if _, err := gate.Write([]byte{1}); err != nil {
 		return 70, err
 	}
@@ -214,6 +269,7 @@ func startManaged(ctx context.Context, args []string, c config, checks routeChec
 	generation := uint64(0)
 	var proofGeneration uint64
 	lastVerified := time.Now()
+	previousWall := lastVerified.UnixNano()
 	var pausedSince, closingAt time.Time
 	for {
 		select {
@@ -242,6 +298,12 @@ func startManaged(ctx context.Context, args []string, c config, checks routeChec
 				log(runPaused, "paused "+filepath.Base(target[0])+" · network changed")
 			}
 		case <-routeTick.C:
+			wall := time.Now().UnixNano()
+			if wall-previousWall > int64(4*time.Second) || wall < previousWall {
+				generation++
+				lastVerified = time.Time{}
+			}
+			previousWall = wall
 			var policyErr error
 			if checks.load != nil {
 				var latest config

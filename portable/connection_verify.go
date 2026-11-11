@@ -21,6 +21,7 @@ type connectionPath struct {
 	ipv6    bool
 	network string
 	proxies map[string]*url.URL
+	hosts   []string
 	key     string
 }
 
@@ -48,7 +49,7 @@ func verifyTarget(ctx context.Context, c config, target string) report {
 		r.Probes = addressProbes(ctx, c, path.adapter, path.ipv6, false)
 		r.IPs, err = consensus(r.Probes, path.ipv6)
 	} else {
-		r.Probes, r.IPs, countries, err = probeServicePaths(ctx, target, path)
+		r.Probes, r.IPs, countries, err = probeServicePaths(ctx, path)
 	}
 	if err != nil {
 		r.Reason = err.Error()
@@ -76,10 +77,11 @@ func verifyTarget(ctx context.Context, c config, target string) report {
 func findConnectionPath(ctx context.Context, c config, mode connectionMode, target string) (connectionPath, error) {
 	path := connectionPath{adapter: c.Adapter, mode: mode}
 	var identity []string
-	if mode == fullTunnel && len(c.TrustedNetworks) != 0 {
+	if len(c.TrustedNetworks) != 0 {
 		fingerprint, adapter, err := localNetworkIdentity(ctx)
 		if err == nil && slices.ContainsFunc(c.TrustedNetworks, func(n trustedNetwork) bool { return n.Fingerprint == fingerprint }) {
 			path.adapter, path.network = adapter, fingerprint
+			mode, path.mode = fullTunnel, fullTunnel
 		}
 	}
 	if path.adapter == "" && mode != systemProxy {
@@ -95,12 +97,21 @@ func findConnectionPath(ctx context.Context, c config, mode connectionMode, targ
 			return path, err
 		}
 	} else {
-		hosts := serviceHosts(target)
+		hosts := serviceHosts(target, c.Rules[target].Host)
 		if len(hosts) == 0 {
 			return path, errors.New("no service routes are defined for this application")
 		}
 		path.proxies = make(map[string]*url.URL)
+		path.hosts = hosts
+		if mode == serviceTunnel {
+			var err error
+			path.ipv6, err = ipv6Tunnel(ctx, path.adapter)
+			if err != nil {
+				return path, err
+			}
+		}
 		for _, host := range hosts {
+			identity = append(identity, host)
 			if mode == systemProxy {
 				endpoint := serviceEndpoint(host)
 				proxy, err := resolveSystemProxy(ctx, endpoint)
@@ -166,11 +177,11 @@ func serviceEndpoint(host string) *url.URL {
 	return &url.URL{Scheme: "https", Host: host, Path: "/cdn-cgi/trace"}
 }
 
-func probeServicePaths(ctx context.Context, target string, path connectionPath) ([]probe, []string, map[string]string, error) {
+func probeServicePaths(ctx context.Context, path connectionPath) ([]probe, []string, map[string]string, error) {
 	var probes []probe
 	var ips []string
 	countries := make(map[string]string)
-	for _, host := range serviceHosts(target) {
+	for _, host := range path.hosts {
 		adapter := path.adapter
 		if path.mode == systemProxy {
 			adapter = ""

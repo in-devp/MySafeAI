@@ -40,7 +40,13 @@ func (s storage) load() (config, error) {
 	if err != nil {
 		return c, err
 	}
-	return c, json.Unmarshal(data, &c)
+	if err := json.Unmarshal(data, &c); err != nil {
+		return config{}, err
+	}
+	if err := c.validatePolicy(); err != nil {
+		return config{}, err
+	}
+	return c, nil
 }
 
 func (s storage) save(c config) error {

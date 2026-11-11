@@ -3,5 +3,5 @@
 package main
 
 func nativeProcessBackend() processBackend {
-	return processBackend{listAppProcesses, controlAppProcess}
+	return processBackend{list: listAppProcesses, signal: controlAppProcess, threads: appThreadLeases, adopt: adoptAppThreadLeases}
 }

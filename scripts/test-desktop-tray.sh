@@ -160,6 +160,16 @@ wait "$panel_pid" || :
 panel_pid=
 wait_for window_visible
 printf 'Window returned automatically when the tray host closed\n'
+wait_for test -s "$XDG_CONFIG_HOME/MySafeAI/observer-client.json"
+kill -KILL "$app_pid"
+wait "$app_pid" 2>/dev/null || :
+app_pid=
+wait_for window_visible
+app_pid=$(xdotool getwindowpid "$(window_id)")
+printf 'The background observer reopened the window after an unexpected exit\n'
 kill -INT "$app_pid"
-wait "$app_pid"
+observer_stopped() {
+    [ ! -e "$XDG_CONFIG_HOME/MySafeAI/observer.json" ]
+}
+wait_for observer_stopped
 app_pid=

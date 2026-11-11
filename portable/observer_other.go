@@ -12,8 +12,8 @@ var errObserverUnsupported = errors.New("the portable monitor is unavailable on 
 
 func nativeProcessBackend() processBackend {
 	return processBackend{
-		func() ([]appProcess, error) { return nil, errObserverUnsupported },
-		func(appProcessKey, appProcessAction) error { return errObserverUnsupported },
+		list:   func() ([]appProcess, error) { return nil, errObserverUnsupported },
+		signal: func(appProcessKey, appProcessAction) error { return errObserverUnsupported },
 	}
 }
 

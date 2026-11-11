@@ -79,6 +79,36 @@ func TestWatchDoesNotResumeExternalStops(t *testing.T) {
 	}
 }
 
+func TestInvalidConfigurationDoesNotReleaseRecoveredApplications(t *testing.T) {
+	item := fixtureProcess(900011, 0, 1, "/some/custom-app")
+	item.Stopped = true
+	s := storage{t.TempDir()}
+	records := []pauseRecord{{Key: item.Key, Targets: []string{"custom-example"}, Phase: "owned", Started: time.Now()}}
+	if err := s.saveJSON("observer-pauses.json", records); err != nil {
+		t.Fatal(err)
+	}
+	watch := newAppWatch(s, processBackend{
+		list: func() ([]appProcess, error) { return []appProcess{item}, nil },
+		signal: func(key appProcessKey, action appProcessAction) error {
+			if action == appResume {
+				t.Fatalf("invalid configuration released %v", key)
+			}
+			return nil
+		},
+	}, nil)
+	watch.reconcile(context.Background(), time.Now(), builtInTargets, os.ErrInvalid)
+	if _, ok := watch.pauses[item.Key]; !ok {
+		t.Fatal("lost the recorded pause")
+	}
+}
+
+func TestManagedTargetsIncludeBothPresetAndCustomRule(t *testing.T) {
+	c := config{CustomTargets: []appTarget{{ID: "custom-codex", Executable: "/opt/codex"}}}
+	if ids := c.commandTargets([]string{"/opt/codex"}); !slices.Equal(ids, []string{"codex-cli", "custom-codex"}) {
+		t.Fatalf("incorrect managed rule precedence: %v", ids)
+	}
+}
+
 func TestBasicPolicyEditPreservesAdvancedRules(t *testing.T) {
 	s := storage{t.TempDir()}
 	if err := os.WriteFile(filepath.Join(s.dir, "portable.json"), []byte(`{"adapter":"vpn","allowed":["203.0.113.42"]}`), 0o600); err != nil {

@@ -13,6 +13,12 @@ type appProcessKey struct {
 	Started uint64 `json:"started"`
 }
 
+type appThreadLease struct {
+	ID      uint32 `json:"id"`
+	Started uint64 `json:"started"`
+	Count   uint32 `json:"count,omitempty"`
+}
+
 type appProcess struct {
 	Key        appProcessKey
 	Parent     int
@@ -103,9 +109,10 @@ func matchesExecutable(expected, actual string) bool {
 	return expected == actual
 }
 
-func managedGate(process appProcess) bool {
+func managedGate(process appProcess, executable string) bool {
 	name := executableBase(process.Executable)
-	return (name == "mysafeai" || name == "mysafeai-desktop") &&
+	return (name == "mysafeai" || name == "mysafeai-desktop" ||
+		(executable != "" && matchesExecutable(executable, process.Executable))) &&
 		len(process.Arguments) > 1 && process.Arguments[1] == "_gate"
 }
 
@@ -159,7 +166,7 @@ func watchedProcesses(processes []appProcess, targets []appTarget, self int) []w
 		parent := parentOf(process)
 		inherited := resolve(parent)
 		result := watchedProcess{appProcess: process, depth: inherited.depth + 1}
-		excluded[pid] = managedGate(process) || excluded[parent.Key.PID]
+		excluded[pid] = managedGate(process, byPID[self].Executable) || excluded[parent.Key.PID]
 		if !excluded[pid] {
 			result.targets = append([]string(nil), inherited.targets...)
 			add := func(id string) {

@@ -86,11 +86,13 @@ type leakDiagnostics struct {
 	Proxy       string         `json:"proxy"`
 	DNS         dnsRouteReport `json:"dns"`
 	ExternalDNS dnsObservation `json:"externalDNS"`
+	Changed     bool           `json:"changed"`
 }
 
 func diagnoseLeaks(ctx context.Context, c config) leakDiagnostics {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
+	changes := connectionEvents(ctx)
 	result := leakDiagnostics{Proxy: "unknown", ExternalDNS: dnsObservation{Status: "disabled"}}
 	var wait sync.WaitGroup
 	wait.Go(func() { result.Direct = addressProbes(ctx, c, "", true, false) })
@@ -108,6 +110,11 @@ func diagnoseLeaks(ctx context.Context, c config) leakDiagnostics {
 		wait.Go(func() { result.ExternalDNS = observeResolvers(ctx) })
 	}
 	wait.Wait()
+	select {
+	case _, open := <-changes:
+		result.Changed = open
+	default:
+	}
 	for _, p := range result.System {
 		if p.usedProxy {
 			result.Proxy = "proxy"

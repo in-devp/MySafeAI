@@ -63,21 +63,26 @@ func runWatchWorker(parent context.Context, s storage) error {
 		defer close(done)
 		watch.run(ctx)
 	}()
+	var cleanExit bool
 	defer func() {
 		cancel()
 		<-done
+		if cleanExit {
+			watch.releaseAll()
+		}
 		_ = os.Remove(filepath.Join(s.dir, watchBeaconFile))
 	}()
 	token := secret()
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	var lastClient time.Time
+	lastClient := time.Now()
 	var recentRestarts []time.Time
 	for {
 		now := time.Now()
 		var command watchCommand
 		if s.readJSON(watchCommandFile, &command) == nil && command.Token == token {
 			if command.Quit && now.Sub(command.At) < 10*time.Second {
+				cleanExit = true
 				return nil
 			}
 			if command.At.After(lastClient) && !command.At.After(now.Add(time.Second)) {
@@ -92,9 +97,7 @@ func runWatchWorker(parent context.Context, s storage) error {
 				s.event("Панель перезапущена после потери связи с монитором")
 			}
 		}
-		if err := s.saveJSON(watchBeaconFile, watchBeacon{token, now, *watch.status.Load()}); err != nil {
-			return err
-		}
+		_ = s.saveJSON(watchBeaconFile, watchBeacon{token, now, *watch.status.Load()})
 		select {
 		case <-ctx.Done():
 			return nil
