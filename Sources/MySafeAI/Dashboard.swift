@@ -664,7 +664,9 @@ private struct AddressSettings: View {
             PanelIconTile(symbol: icon)
             Text(title).accessibilityHidden(true)
             Spacer(minLength: 4)
-            Toggle(title, isOn: Binding(get: { value }, set: change))
+            Toggle(title, isOn: Binding(get: { value }, set: { enabled in
+                Task { @MainActor in change(enabled) }
+            }))
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.small)
