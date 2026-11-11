@@ -17,7 +17,7 @@ jobs:
     container: archlinux:base-devel
     steps:
       - name: Install Arch build dependencies
-        run: pacman -Syu --noconfirm --needed git go gtk4 webkitgtk-6.0 iproute2
+        run: pacman -Syu --noconfirm --needed git go gtk4 webkitgtk-6.0 iproute2 dbus xorg-server-xvfb xorg-xauth xfce4-panel xfwm4 xdotool imagemagick ttf-dejavu
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -36,6 +36,21 @@ jobs:
           test -f /usr/share/applications/app.mysafeai.desktop.desktop
           mkdir -p "$GITHUB_WORKSPACE/dist"
           cp mysafeai-*.pkg.tar.zst "$GITHUB_WORKSPACE/dist/"
+      - name: Verify the installed Arch window and Xfce tray
+        shell: bash
+        env:
+          # The container's seccomp policy prevents WebKit from starting bubblewrap.
+          WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS: "1"
+        run: |
+          install -m 755 scripts/test-desktop-tray.sh /tmp/mysafeai-tray-check
+          runuser -u builder -- xvfb-run -a dbus-run-session -- /tmp/mysafeai-tray-check /usr/bin/mysafeai /tmp/mysafeai-arch.png
+          install -m 644 /tmp/mysafeai-arch.png dist/mysafeai-arch.png
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/mysafeai-arch.png
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           path: dist/mysafeai-*.pkg.tar.zst
@@ -57,7 +72,7 @@ jobs:
           release: "15.1"
           sync: rsync
           copyback: true
-          prepare: pkg install -y go126 pkgconf gtk4 webkit2-gtk_60 xorg-vfbserver dbus
+          prepare: pkg install -y go126 pkgconf gtk4 webkit2-gtk_60 xorg-vfbserver dbus xfce4-panel xfce4-wm xdotool
           run: |
             set -eu
             go_bin=$(command -v go126 || command -v go)
@@ -70,6 +85,7 @@ jobs:
             cp ../LICENSE ../README.md ../dist/freebsd/
             tar -czf ../dist/MySafeAI-FreeBSD-amd64.tar.gz -C ../dist/freebsd mysafeai LICENSE README.md
             install -m 755 ../dist/freebsd/mysafeai /tmp/mysafeai-freebsd
+            install -m 755 ../scripts/test-desktop-tray.sh /tmp/mysafeai-tray-check
             pw useradd builder -m -s /bin/sh
             su builder -c '
               export PATH=/usr/local/bin:/usr/bin:/bin
@@ -78,6 +94,7 @@ jobs:
               trap "kill $display_pid" EXIT
               sleep 1
               DISPLAY=:99 dbus-run-session -- /tmp/mysafeai-freebsd _smoke-ui
+              DISPLAY=:99 dbus-run-session -- /tmp/mysafeai-tray-check /tmp/mysafeai-freebsd
             '
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

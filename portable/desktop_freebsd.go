@@ -10,7 +10,11 @@ package main
 #include <stdlib.h>
 
 static GtkApplication *desktop_app;
+static GtkWindow *desktop_window;
 static const char *desktop_url;
+static const char *icon_dir;
+static gint tray_available;
+static gboolean start_hidden;
 
 static gboolean decide_navigation(WebKitWebView *view, WebKitPolicyDecision *decision,
                                   WebKitPolicyDecisionType type, gpointer unused) {
@@ -31,19 +35,58 @@ static gboolean decide_navigation(WebKitWebView *view, WebKitPolicyDecision *dec
     return FALSE;
 }
 
-static void activate(GtkApplication *app, gpointer unused) {
-    GtkWindow *window = gtk_application_get_active_window(app);
-    if (!window) {
-        window = GTK_WINDOW(gtk_application_window_new(app));
-        gtk_window_set_title(window, "MySafeAI");
-        gtk_window_set_default_size(window, 420, 550);
-        gtk_widget_set_size_request(GTK_WIDGET(window), 340, 440);
-        GtkWidget *view = webkit_web_view_new();
-        g_signal_connect(view, "decide-policy", G_CALLBACK(decide_navigation), NULL);
-        gtk_window_set_child(window, view);
-        webkit_web_view_load_uri(WEBKIT_WEB_VIEW(view), desktop_url);
+static gboolean hide_desktop(gpointer unused) {
+    if (desktop_window && g_atomic_int_get(&tray_available)) {
+        gtk_widget_set_visible(GTK_WIDGET(desktop_window), FALSE);
     }
-    gtk_window_present(window);
+    return G_SOURCE_REMOVE;
+}
+
+static gboolean close_window(GtkWindow *window, gpointer unused) {
+    if (!g_atomic_int_get(&tray_available)) {
+        return FALSE;
+    }
+    hide_desktop(NULL);
+    return TRUE;
+}
+
+static void activate(GtkApplication *app, gpointer unused) {
+    if (desktop_window) {
+        gtk_window_present(desktop_window);
+        return;
+    }
+    desktop_window = GTK_WINDOW(gtk_application_window_new(app));
+    g_object_add_weak_pointer(G_OBJECT(desktop_window), (gpointer *)&desktop_window);
+    gtk_window_set_title(desktop_window, "MySafeAI");
+    gtk_window_set_default_size(desktop_window, 420, 550);
+    gtk_widget_set_size_request(GTK_WIDGET(desktop_window), 340, 440);
+    GtkIconTheme *theme = gtk_icon_theme_get_for_display(gtk_widget_get_display(GTK_WIDGET(desktop_window)));
+    gtk_icon_theme_add_search_path(theme, icon_dir);
+    gtk_window_set_icon_name(desktop_window, "app.mysafeai.desktop");
+    GtkWidget *view = webkit_web_view_new();
+    g_signal_connect(view, "decide-policy", G_CALLBACK(decide_navigation), NULL);
+    g_signal_connect(desktop_window, "close-request", G_CALLBACK(close_window), NULL);
+    gtk_window_set_child(desktop_window, view);
+    webkit_web_view_load_uri(WEBKIT_WEB_VIEW(view), desktop_url);
+    if (!start_hidden || !g_atomic_int_get(&tray_available)) {
+        gtk_window_present(desktop_window);
+    }
+    start_hidden = FALSE;
+}
+
+static gboolean show_desktop(gpointer unused) {
+    if (desktop_app) {
+        g_application_activate(G_APPLICATION(desktop_app));
+    }
+    return G_SOURCE_REMOVE;
+}
+
+static gboolean restore_without_tray(gpointer unused) {
+    if (desktop_window && !gtk_widget_get_visible(GTK_WIDGET(desktop_window))
+        && !g_atomic_int_get(&tray_available)) {
+        gtk_window_present(desktop_window);
+    }
+    return G_SOURCE_REMOVE;
 }
 
 static gboolean quit_desktop(gpointer unused) {
@@ -54,17 +97,29 @@ static gboolean quit_desktop(gpointer unused) {
 }
 
 static void request_quit(void) {
-    g_main_context_invoke(NULL, quit_desktop, NULL);
+    g_idle_add(quit_desktop, NULL);
 }
 
-static int run_desktop(const char *url) {
+static void request_show(void) { g_idle_add(show_desktop, NULL); }
+static void request_hide(void) { g_idle_add(hide_desktop, NULL); }
+
+static void set_tray_available(gint available) {
+    if (g_atomic_int_exchange(&tray_available, available) && !available) {
+        g_idle_add(restore_without_tray, NULL);
+    }
+}
+
+static int run_desktop(const char *url, const char *icons, gboolean hidden) {
     desktop_url = url;
+    icon_dir = icons;
+    start_hidden = hidden;
     desktop_app = gtk_application_new("app.mysafeai.desktop", G_APPLICATION_DEFAULT_FLAGS);
     g_signal_connect(desktop_app, "activate", G_CALLBACK(activate), NULL);
     int status = g_application_run(G_APPLICATION(desktop_app), 0, NULL);
     g_object_unref(desktop_app);
     desktop_app = NULL;
     desktop_url = NULL;
+    icon_dir = NULL;
     return status;
 }
 */
@@ -74,8 +129,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync/atomic"
@@ -91,9 +149,40 @@ func runDesktop(parent context.Context, s storage, smoke bool) error {
 	defer listener.Close()
 
 	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+	trayOnly, err := s.loadTrayOnly()
+	if err != nil {
+		log.Printf("window preferences: %v", err)
+	}
+	iconDir, err := os.MkdirTemp("", "mysafeai-icon-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(iconDir)
+	icon, err := web.ReadFile("web/tray.png")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(iconDir, "app.mysafeai.desktop.png"), icon, 0o600); err != nil {
+		return err
+	}
+	tray, _ := openFreeBSDTray(icon, func() { C.request_show() })
+	var hasTray atomic.Bool
+	updateTray := func(available bool) {
+		hasTray.Store(available)
+		if available {
+			C.set_tray_available(1)
+		} else {
+			C.set_tray_available(0)
+		}
+	}
+	if tray != nil {
+		defer tray.conn.Close()
+		updateTray(tray.refresh())
+	}
 	var ready atomic.Bool
 	ui := &panel{storage: s, ctx: ctx, running: make(map[string]session), token: secret(),
-		smoke: smoke, tray: func() bool { return false }}
+		smoke: smoke, tray: hasTray.Load, trayOnly: trayOnly, hide: func() { C.request_hide() }}
 	defer func() {
 		cancel()
 		ui.shutdown()
@@ -127,10 +216,20 @@ func runDesktop(parent context.Context, s storage, smoke bool) error {
 		defer timeout.Stop()
 	}
 	go func() {
-		select {
-		case <-parent.Done():
-			C.request_quit()
-		case <-ctx.Done():
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-parent.Done():
+				C.request_quit()
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if tray != nil {
+					updateTray(tray.refresh())
+				}
+			}
 		}
 	}()
 
@@ -138,7 +237,13 @@ func runDesktop(parent context.Context, s storage, smoke bool) error {
 	defer runtime.UnlockOSThread()
 	url := C.CString("http://" + host + prefix)
 	defer C.free(unsafe.Pointer(url))
-	if status := C.run_desktop(url); status != 0 {
+	icons := C.CString(iconDir)
+	defer C.free(unsafe.Pointer(icons))
+	var hidden C.gboolean
+	if trayOnly {
+		hidden = 1
+	}
+	if status := C.run_desktop(url, icons, hidden); status != 0 {
 		return fmt.Errorf("GTK exited with status %d", status)
 	}
 	if smoke && !ready.Load() {
