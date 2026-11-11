@@ -7,6 +7,7 @@ url='https://github.com/in-devp/MySafeAI'
 license=('MIT')
 depends=('gtk4' 'webkitgtk-6.0' 'iproute2')
 makedepends=('go' 'pkgconf')
+options=('!debug')
 source=("$pkgname-$pkgver.tar.gz")
 sha256sums=('SKIP') # CI generates this archive from the checked-out commit.
 

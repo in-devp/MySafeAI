@@ -27,7 +27,7 @@ jobs:
           useradd --create-home builder
           package_dir=$(mktemp -d)
           cp portable/packaging/arch/PKGBUILD "$package_dir"
-          git archive --format=tar.gz --prefix=mysafeai-0.1.0/ HEAD LICENSE portable > "$package_dir/mysafeai-0.1.0.tar.gz"
+          git -c safe.directory="$GITHUB_WORKSPACE" archive --format=tar.gz --prefix=mysafeai-0.1.0/ HEAD LICENSE portable > "$package_dir/mysafeai-0.1.0.tar.gz"
           chown -R builder:builder "$package_dir"
           cd "$package_dir"
           runuser -u builder -- makepkg --noconfirm
