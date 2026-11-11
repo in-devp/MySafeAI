@@ -30,7 +30,7 @@ func verify(ctx context.Context, c config) report {
 }
 
 func verifyTarget(ctx context.Context, c config, target string) report {
-	r := report{Adapter: c.Adapter}
+	r := report{Adapter: c.Adapter, target: target}
 	if err := c.validatePolicy(); err != nil {
 		r.Reason = err.Error()
 		return r

@@ -9,7 +9,6 @@ import (
 	"os"
 	"slices"
 	"sort"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -71,9 +70,7 @@ type pauseRecord struct {
 type appWatch struct {
 	storage     storage
 	backend     processBackend
-	reveal      func()
 	status      atomic.Pointer[watchStatus]
-	declined    sync.Map
 	policy      config
 	policyKey   string
 	generation  uint64
@@ -81,15 +78,13 @@ type appWatch struct {
 	pauses      map[appProcessKey]pauseRecord
 	remembered  map[appProcessKey]watchedProcess
 	ranTrusted  map[appProcessKey]bool
-	offered     map[string]bool
 	recoveryErr error
 }
 
-func newAppWatch(s storage, backend processBackend, reveal func()) *appWatch {
-	w := &appWatch{storage: s, backend: backend, reveal: reveal,
+func newAppWatch(s storage, backend processBackend) *appWatch {
+	w := &appWatch{storage: s, backend: backend,
 		proofs: make(map[string]policyProof), pauses: make(map[appProcessKey]pauseRecord),
-		remembered: make(map[appProcessKey]watchedProcess), ranTrusted: make(map[appProcessKey]bool),
-		offered: make(map[string]bool)}
+		remembered: make(map[appProcessKey]watchedProcess), ranTrusted: make(map[appProcessKey]bool)}
 	w.status.Store(&watchStatus{State: "checking"})
 	var leases []pauseRecord
 	if err := s.readJSON("observer-pauses.json", &leases); err == nil {
@@ -368,15 +363,6 @@ func (w *appWatch) reconcile(ctx context.Context, now time.Time, targets []appTa
 		go func() { _ = notifyProtection(ctx, "MySafeAI", message) }()
 	}
 	w.status.Store(&status)
-	for _, pending := range status.Pending {
-		if !w.offered[pending.ID] {
-			w.offered[pending.ID] = true
-			if w.reveal != nil {
-				w.reveal()
-			}
-			break
-		}
-	}
 }
 
 func (w *appWatch) targetsTrusted(targets []string) bool {
@@ -530,26 +516,29 @@ func (w *appWatch) releaseAll() {
 func (w *appWatch) populateApprovals(status *watchStatus, targets []appTarget, active map[string]watchedApp) {
 	seen := make(map[string]bool)
 	for _, item := range append([]appTarget{{ID: "global"}}, targets...) {
-		proof := w.proofs[item.ID]
-		if proof.Trusted || len(proof.IPs) == 0 || proof.routeKey == "" {
-			continue
-		}
 		if item.ID != "global" && active[item.ID].Count == 0 {
 			continue
 		}
-		policy, rule := w.policy.forTarget(item.ID)
-		target := item.ID
-		if w.policy.Rules[item.ID].Allowed == nil && w.policy.Rules[item.ID].Countries == nil && rule.Mode == fullTunnel {
-			target = "global"
-		}
-		approval := pendingApproval{Target: target, Adapter: proof.Adapter, IPs: proof.IPs, Mode: proof.Mode,
-			ProbeTarget: item.ID, RouteKey: proof.routeKey, PolicyKey: w.policyKey}
-		id := policyFingerprint(policy) + proof.routeKey + target + fmt.Sprint(proof.IPs)
-		approval.ID = fmt.Sprintf("%x", sha256.Sum256([]byte(id)))
-		_, declined := w.declined.Load(approval.ID)
-		if !declined && !seen[approval.ID] {
+		approval, ok := approvalFor(w.policy, item.ID, w.proofs[item.ID].report)
+		if ok && !seen[approval.ID] {
 			seen[approval.ID] = true
 			status.Pending = append(status.Pending, approval)
 		}
 	}
+}
+
+func approvalFor(c config, target string, proof report) (pendingApproval, bool) {
+	if proof.Trusted || len(proof.IPs) == 0 || proof.routeKey == "" || target == "" {
+		return pendingApproval{}, false
+	}
+	policy, rule := c.forTarget(target)
+	effectiveTarget := target
+	if c.Rules[target].Allowed == nil && c.Rules[target].Countries == nil && rule.Mode == fullTunnel {
+		effectiveTarget = "global"
+	}
+	id := policyFingerprint(policy) + proof.routeKey + effectiveTarget + fmt.Sprint(proof.IPs)
+	return pendingApproval{
+		ID: fmt.Sprintf("%x", sha256.Sum256([]byte(id))), Target: effectiveTarget, Adapter: proof.Adapter,
+		IPs: proof.IPs, Mode: proof.Mode, ProbeTarget: target, RouteKey: proof.routeKey, PolicyKey: policyFingerprint(c),
+	}, true
 }

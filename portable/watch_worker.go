@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -57,7 +58,7 @@ func runWatchWorker(parent context.Context, s storage) error {
 	defer release()
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
-	watch := newAppWatch(s, nativeProcessBackend(), nil)
+	watch := newAppWatch(s, nativeProcessBackend())
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -69,6 +70,9 @@ func runWatchWorker(parent context.Context, s storage) error {
 		<-done
 		if cleanExit {
 			watch.releaseAll()
+			if len(watch.pauses) != 0 {
+				s.event("После выхода остались паузы с неподтверждённым восстановлением")
+			}
 		}
 		_ = os.Remove(filepath.Join(s.dir, watchBeaconFile))
 	}()
@@ -97,13 +101,63 @@ func runWatchWorker(parent context.Context, s storage) error {
 				s.event("Панель перезапущена после потери связи с монитором")
 			}
 		}
-		_ = s.saveJSON(watchBeaconFile, watchBeacon{token, now, *watch.status.Load()})
+		status := *watch.status.Load()
+		status.Pending = append([]pendingApproval(nil), status.Pending...)
+		for _, item := range s.pendingPreflights(now) {
+			if !slices.ContainsFunc(status.Pending, func(existing pendingApproval) bool { return existing.ID == item.ID }) {
+				status.Pending = append(status.Pending, item)
+			}
+		}
+		_ = s.saveJSON(watchBeaconFile, watchBeacon{token, now, status})
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
 		}
 	}
+}
+
+type preflightRequest struct {
+	At       time.Time       `json:"at"`
+	Approval pendingApproval `json:"approval"`
+}
+
+func (s storage) offerPreflight(filename string, c config, proof report) {
+	if approval, ok := approvalFor(c, proof.target, proof); ok {
+		_ = s.saveJSON(filename, preflightRequest{time.Now(), approval})
+	} else {
+		_ = os.Remove(filepath.Join(s.dir, filename))
+	}
+}
+
+func (s storage) pendingPreflights(now time.Time) []pendingApproval {
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		return nil
+	}
+	c, err := s.load()
+	if err != nil {
+		return nil
+	}
+	key := policyFingerprint(c)
+	var pending []pendingApproval
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, "preflight-") || !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		var request preflightRequest
+		if err := s.readJSON(name, &request); err != nil {
+			continue
+		}
+		age := now.Sub(request.At)
+		if age > 32*time.Second {
+			_ = os.Remove(filepath.Join(s.dir, name))
+		} else if age >= -time.Second && request.Approval.PolicyKey == key && len(pending) < 16 {
+			pending = append(pending, request.Approval)
+		}
+	}
+	return pending
 }
 
 func spawnMySafeAI(argument string) error {

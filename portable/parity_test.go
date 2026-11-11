@@ -62,7 +62,7 @@ func TestWatchDoesNotResumeExternalStops(t *testing.T) {
 			}
 			return nil
 		},
-	}, nil)
+	})
 	now := time.Now()
 	watch.reconcile(context.Background(), now, builtInTargets, nil)
 	if !slices.Equal(signals, []signal{{root.Key, appPause}, {child.Key, appPause}}) {
@@ -95,7 +95,7 @@ func TestInvalidConfigurationDoesNotReleaseRecoveredApplications(t *testing.T) {
 			}
 			return nil
 		},
-	}, nil)
+	})
 	watch.reconcile(context.Background(), time.Now(), builtInTargets, os.ErrInvalid)
 	if _, ok := watch.pauses[item.Key]; !ok {
 		t.Fatal("lost the recorded pause")
@@ -106,6 +106,28 @@ func TestManagedTargetsIncludeBothPresetAndCustomRule(t *testing.T) {
 	c := config{CustomTargets: []appTarget{{ID: "custom-codex", Executable: "/opt/codex"}}}
 	if ids := c.commandTargets([]string{"/opt/codex"}); !slices.Equal(ids, []string{"codex-cli", "custom-codex"}) {
 		t.Fatalf("incorrect managed rule precedence: %v", ids)
+	}
+}
+
+func TestPendingPreflightUsesTheManagedRulesWithoutAnExistingProcess(t *testing.T) {
+	s := storage{t.TempDir()}
+	disabled := false
+	c := config{Watch: &disabled, Rules: map[string]appConnectionRule{"codex-cli": {Allowed: []string{"203.0.113.1"}}}}
+	if err := s.save(c); err != nil {
+		t.Fatal(err)
+	}
+	proof := report{target: "codex-cli", routeKey: "current-route", IPs: []string{"203.0.113.2"}, Mode: "tunnel"}
+	s.offerPreflight("preflight-fixture.json", c, proof)
+	pending := s.pendingPreflights(time.Now())
+	if len(pending) != 1 || pending[0].Target != "codex-cli" || pending[0].ProbeTarget != "codex-cli" {
+		t.Fatalf("preflight did not offer the app-specific IP: %+v", pending)
+	}
+	c.Adapter = "changed"
+	if err := s.save(c); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.pendingPreflights(time.Now())) != 0 {
+		t.Fatal("published a proposal for an old policy")
 	}
 }
 

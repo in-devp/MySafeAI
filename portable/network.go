@@ -48,6 +48,7 @@ type report struct {
 	Reason   string   `json:"reason"`
 	Mode     string   `json:"mode,omitempty"`
 	routeKey string
+	target   string
 }
 
 var (

@@ -40,13 +40,14 @@ type routeCheck struct {
 	load             func() (config, error)
 	path             func(context.Context, config) (connectionPath, error)
 	monitorAvailable func() bool
+	offer            func(string, config, report)
 }
 
 func managedChecks(s storage) routeCheck {
 	return routeCheck{load: s.load, monitorAvailable: func() bool {
 		var beacon watchBeacon
 		return s.readJSON(watchBeaconFile, &beacon) == nil && validBeacon(beacon)
-	}}
+	}, offer: s.offerPreflight}
 }
 
 func (checks routeCheck) scoped(command []string) routeCheck {
@@ -102,6 +103,11 @@ func (checks routeCheck) preflight(ctx context.Context, c config) (report, confi
 	if checks.load == nil || checks.monitorAvailable == nil {
 		return proof, c
 	}
+	request := "preflight-" + secret() + ".json"
+	if checks.offer != nil {
+		checks.offer(request, c, proof)
+		defer checks.offer(request, config{}, report{})
+	}
 	key, verifiedAt := policyFingerprint(c), time.Now()
 	ticker := time.NewTicker(650 * time.Millisecond)
 	defer ticker.Stop()
@@ -119,6 +125,9 @@ func (checks routeCheck) preflight(ctx context.Context, c config) (report, confi
 		if latestKey != key || time.Since(verifiedAt) >= 5*time.Second {
 			c, key = latest, latestKey
 			proof, verifiedAt = checks.verify(ctx, c), time.Now()
+			if checks.offer != nil {
+				checks.offer(request, c, proof)
+			}
 		}
 	}
 	return proof, c
