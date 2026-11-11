@@ -5,7 +5,7 @@ enum BrandMark {
         case off, checking, trusted, paused, warning
     }
 
-    static let badge = NSImage(size: NSSize(width: 24, height: 24), flipped: true) { rect in
+    @MainActor static let badge = NSImage(size: NSSize(width: 24, height: 24), flipped: true) { rect in
         guard let context = NSGraphicsContext.current?.cgContext else { return false }
         drawBadge(in: context, rect: rect)
         return true

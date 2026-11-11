@@ -52,8 +52,11 @@ struct ConnectionAssessment: Sendable {
 
 enum ConnectionPolicy {
     static func diagnosticPaths(targets: [ProtectionTarget], rules: [String: ApplicationAccessRule]) async -> [ServicePath] {
-        let hosts = Set(targets.flatMap { hosts(for: $0, rule: rules[$0.id] ?? .init()) })
-        return await probe(direct: hosts, system: SystemProxyConfiguration.read().isEnabled ? hosts : [])
+        let serviceHosts = Set(targets.flatMap { target in
+            Self.hosts(for: target, rule: rules[target.id] ?? ApplicationAccessRule())
+        })
+        let proxyHosts: Set<String> = SystemProxyConfiguration.read().isEnabled ? serviceHosts : []
+        return await probe(direct: serviceHosts, system: proxyHosts)
     }
 
     static func evaluate(snapshot: NetworkSnapshot, sources: [AddressSource],
