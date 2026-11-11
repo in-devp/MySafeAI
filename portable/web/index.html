@@ -12,6 +12,7 @@
   <header class="header">
     <img src="icon.svg" alt="" width="30" height="30">
     <h1>MySafeAI</h1>
+    <button id="hide-window" class="quiet" hidden>Скрыть</button>
     <button id="exit" class="quiet">Выйти</button>
   </header>
   <main>
@@ -61,12 +62,21 @@
       <p id="journal-empty" class="hint">Здесь появятся запуски, паузы и ошибки защиты.</p>
       <ul id="journal"></ul>
     </section>
+    <section class="card" id="settings-page" hidden>
+      <h2>Работа в фоне</h2>
+      <label class="setting" for="tray-only">
+        <input id="tray-only" type="checkbox" aria-describedby="tray-hint" disabled>
+        Только в трее
+      </label>
+      <p id="tray-hint" class="hint">MySafeAI запускается скрытым. Окно открывается из трея.</p>
+    </section>
     <p id="notice" role="status"></p>
   </main>
   <nav class="navigation" aria-label="Разделы MySafeAI">
     <button type="button" data-page="overview" aria-pressed="true">Обзор</button>
     <button type="button" data-page="policy" aria-pressed="false">Правило</button>
     <button type="button" data-page="journal" aria-pressed="false">Журнал</button>
+    <button type="button" data-page="settings" aria-pressed="false">Настройки</button>
   </nav>
 </body>
 </html>

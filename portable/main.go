@@ -46,17 +46,34 @@ func (s storage) save(c config) error {
 	if err := c.validate(); err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(s.dir, "policy-*.json")
+	return s.saveJSON("portable.json", c)
+}
+
+func (s storage) loadTrayOnly() (bool, error) {
+	var preferences windowPreferences
+	data, err := os.ReadFile(filepath.Join(s.dir, "window.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	err = json.Unmarshal(data, &preferences)
+	return preferences.TrayOnly, err
+}
+
+func (s storage) saveJSON(name string, value any) error {
+	file, err := os.CreateTemp(s.dir, "settings-*.json")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(file.Name())
-	writeErr := json.NewEncoder(file).Encode(c)
+	writeErr := json.NewEncoder(file).Encode(value)
 	closeErr := file.Close()
 	if err := errors.Join(writeErr, closeErr); err != nil {
 		return err
 	}
-	return os.Rename(file.Name(), filepath.Join(s.dir, "portable.json"))
+	return os.Rename(file.Name(), filepath.Join(s.dir, name))
 }
 
 func (s storage) event(message string) {

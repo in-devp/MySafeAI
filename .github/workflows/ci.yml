@@ -31,6 +31,7 @@ jobs:
       - run: |
           ./scripts/build-macos.sh
           codesign --verify --strict dist/MySafeAI.app
+          python3 -c 'import subprocess; subprocess.run(["dist/MySafeAI.app/Contents/MacOS/MySafeAI", "--smoke-window"], timeout=30, check=True)'
           ditto -c -k --keepParent dist/MySafeAI.app "dist/MySafeAI-macOS-${{ matrix.arch }}.zip"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

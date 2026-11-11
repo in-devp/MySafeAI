@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import Observation
 import SwiftUI
 
@@ -10,6 +11,17 @@ final class MySafeAIApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     private var statusItem: NSStatusItem?
     private var offeredAddresses: [String] = []
     private var approvalPanel: NSPanel?
+    private var desktopWindow: NSWindow?
+    private let restoring: Bool
+    private let smokeWindow: Bool
+    private var trayOnly: Bool
+    private static let trayOnlyKey = "trayOnly"
+
+    private init(restoring: Bool, smokeWindow: Bool) {
+        self.restoring = restoring
+        self.smokeWindow = smokeWindow
+        self.trayOnly = !smokeWindow && UserDefaults.standard.bool(forKey: Self.trayOnlyKey)
+    }
 
     static func main() {
         let arguments = CommandLine.arguments
@@ -20,14 +32,22 @@ final class MySafeAIApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
             if let token = UUID(uuidString: arguments[2]) { ProcessPauser.recover(token) }
             return
         }
-        if arguments.count > 1, arguments[1] == "--restore-paused" {
+        let restoring = arguments.dropFirst().first == "--restore-paused"
+        if restoring {
             guard arguments.count == 3, let token = UUID(uuidString: arguments[2]),
                   (try? PauseRecoveryStore.read())?.token == token else { return }
         }
         let application = NSApplication.shared
+        let smokeWindow = arguments.dropFirst().first == "--smoke-window"
+        if smokeWindow {
+            let delegate = MySafeAIApp(restoring: false, smokeWindow: true)
+            application.delegate = delegate
+            withExtendedLifetime(delegate) { application.run() }
+            exit(1)
+        }
         do {
             let instance = try LocalProcessLock(directory: PauseRecoveryStore.directory, name: "application.lock")
-            let delegate = MySafeAIApp()
+            let delegate = MySafeAIApp(restoring: restoring, smokeWindow: false)
             application.setActivationPolicy(.accessory)
             application.delegate = delegate
             withExtendedLifetime((delegate, instance)) {
@@ -55,6 +75,26 @@ final class MySafeAIApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
         item.button?.action = #selector(togglePopover)
         observeProtectionStatus()
 
+        installMenu()
+        if smokeWindow {
+            showDesktopWindow()
+            Task { @MainActor in
+                guard self.desktopWindow?.isVisible == true, NSApp.activationPolicy() == .regular else { exit(1) }
+                self.setTrayOnly(true)
+                guard self.desktopWindow?.isVisible == false, NSApp.activationPolicy() == .accessory else { exit(1) }
+                self.openDesktopMode()
+                guard self.desktopWindow?.isVisible == true, NSApp.activationPolicy() == .regular else { exit(1) }
+                print("macOS desktop window, tray mode and reopen passed")
+                exit(0)
+            }
+            return
+        }
+        let launchKind = NSAppleEventManager.shared().currentAppleEvent?
+            .paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
+        if !trayOnly && !restoring && launchKind != keyAELaunchedAsLogInItem {
+            showDesktopWindow()
+        }
+
         let workspace = NSWorkspace.shared.notificationCenter
         workspace.addObserver(self, selector: #selector(applicationLaunched),
                               name: NSWorkspace.didLaunchApplicationNotification, object: nil)
@@ -74,12 +114,26 @@ final class MySafeAIApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     @objc private func didWake() { model.sleepChanged(false) }
 
     func popoverDidClose(_ notification: Notification) {
-        model.panelVisibilityChanged(approvalPanel?.isVisible == true)
+        updatePanelVisibility()
     }
 
     func windowWillClose(_ notification: Notification) {
-        guard let window = notification.object as? NSWindow, window === approvalPanel else { return }
-        model.panelVisibilityChanged(popover.isShown)
+        guard let window = notification.object as? NSWindow else { return }
+        updatePanelVisibility(excluding: window)
+    }
+
+    func windowDidMiniaturize(_ notification: Notification) { updatePanelVisibility() }
+    func windowDidDeminiaturize(_ notification: Notification) { updatePanelVisibility() }
+
+    private var desktopVisible: Bool {
+        desktopWindow?.isVisible == true && desktopWindow?.isMiniaturized == false
+    }
+
+    private func updatePanelVisibility(excluding window: NSWindow? = nil) {
+        guard !smokeWindow else { return }
+        let hasDesktop = desktopVisible && (window == nil || window !== desktopWindow)
+        let hasApproval = approvalPanel?.isVisible == true && (window == nil || window !== approvalPanel)
+        model.panelVisibilityChanged(popover.isShown || hasDesktop || hasApproval)
     }
 
     private func observeProtectionStatus() {
@@ -130,6 +184,10 @@ final class MySafeAIApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
         guard addresses == model.protection.pendingAddresses,
               addresses != model.protection.declinedAddresses,
               addresses != offeredAddresses else { return }
+        if desktopVisible {
+            offeredAddresses = addresses
+            return
+        }
         if !popover.isShown && approvalPanel?.isVisible != true {
             if let button = statusItem?.button { showPopover(at: button, activate: false) }
             if !popover.isShown { showApprovalPanel() }
@@ -138,6 +196,10 @@ final class MySafeAIApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if !trayOnly {
+            showDesktopWindow()
+            return true
+        }
         if approvalPanel?.isVisible == true {
             approvalPanel?.makeKeyAndOrderFront(nil)
             return true
@@ -146,6 +208,92 @@ final class MySafeAIApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
             showPopover(at: button, activate: true)
         }
         return true
+    }
+
+    @objc private func openDesktopMode() {
+        setTrayOnly(false)
+    }
+
+    private func setTrayOnly(_ enabled: Bool) {
+        trayOnly = enabled
+        if !smokeWindow { UserDefaults.standard.set(enabled, forKey: Self.trayOnlyKey) }
+        if enabled {
+            hideDesktopWindow()
+            NSApp.setActivationPolicy(.accessory)
+            if !smokeWindow, !popover.isShown, approvalPanel?.isVisible != true, let button = statusItem?.button {
+                showPopover(at: button, activate: true)
+            }
+        } else {
+            showDesktopWindow()
+        }
+    }
+
+    private func showDesktopWindow() {
+        NSApp.setActivationPolicy(.regular)
+        let window: NSWindow
+        if let desktopWindow {
+            window = desktopWindow
+        } else {
+            window = NSWindow(
+                contentRect: CGRect(x: 0, y: 0, width: 470, height: 550),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                backing: .buffered, defer: false
+            )
+            window.title = "MySafeAI"
+            window.appearance = NSAppearance(named: .darkAqua)
+            window.isReleasedWhenClosed = false
+            window.delegate = self
+            window.contentViewController = NSHostingController(rootView: dashboard(inWindow: true))
+            window.contentMinSize = CGSize(width: Dashboard.size.width, height: 410)
+            window.center()
+            if !smokeWindow { window.setFrameAutosaveName("MySafeAI desktop") }
+            desktopWindow = window
+        }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
+        popover.close()
+        if approvalPanel?.isVisible == true { approvalPanel?.close() }
+        updatePanelVisibility()
+    }
+
+    private func hideDesktopWindow() {
+        desktopWindow?.orderOut(nil)
+        updatePanelVisibility()
+    }
+
+    private func dashboard(inWindow: Bool = false) -> Dashboard {
+        Dashboard(model: model, inWindow: inWindow,
+                  windowAction: inWindow ? hideDesktopWindow : openDesktopMode,
+                  setTrayOnly: setTrayOnly)
+    }
+
+    private func installMenu() {
+        let main = NSMenu()
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu(title: "MySafeAI")
+        let openItem = appMenu.addItem(withTitle: "Открыть окно MySafeAI", action: #selector(openDesktopMode), keyEquivalent: "0")
+        openItem.target = self
+        appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Выйти из MySafeAI", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appItem.submenu = appMenu
+        main.addItem(appItem)
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Правка")
+        editMenu.addItem(withTitle: "Вырезать", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Копировать", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Вставить", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Выбрать всё", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = editMenu
+        main.addItem(editItem)
+        let windowItem = NSMenuItem()
+        let windowMenu = NSMenu(title: "Окно")
+        windowMenu.addItem(withTitle: "Закрыть окно", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowMenu.addItem(withTitle: "Свернуть", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowItem.submenu = windowMenu
+        main.addItem(windowItem)
+        NSApp.mainMenu = main
+        NSApp.windowsMenu = windowMenu
     }
 
     private func showApprovalPanel() {
@@ -163,22 +311,22 @@ final class MySafeAIApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
         panel.level = .floating
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         panel.delegate = self
-        panel.contentViewController = NSHostingController(rootView: Dashboard(model: model))
+        panel.contentViewController = NSHostingController(rootView: dashboard())
         panel.setContentSize(Dashboard.size)
         panel.center()
         approvalPanel = panel
         panel.orderFrontRegardless()
-        model.panelVisibilityChanged(true)
+        updatePanelVisibility()
     }
 
     private func showPopover(at button: NSStatusBarButton, activate: Bool) {
         model.background.refresh()
-        let controller = NSHostingController(rootView: Dashboard(model: model))
+        let controller = NSHostingController(rootView: dashboard())
         popover.contentViewController = controller
         popover.contentSize = Dashboard.size
         if activate { NSApplication.shared.activate() }
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
         if activate { controller.view.window?.makeKey() }
-        if popover.isShown { model.panelVisibilityChanged(true) }
+        updatePanelVisibility()
     }
 }

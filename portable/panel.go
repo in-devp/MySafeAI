@@ -24,17 +24,24 @@ type session struct {
 	cancel context.CancelFunc
 }
 
+type windowPreferences struct {
+	TrayOnly bool `json:"trayOnly"`
+}
+
 type panel struct {
-	storage storage
-	ctx     context.Context
-	stop    context.CancelFunc
-	pick    func() (string, error)
-	mu      sync.Mutex
-	running map[string]session
-	token   string
-	smoke   bool
-	closed  bool
-	workers sync.WaitGroup
+	storage  storage
+	ctx      context.Context
+	stop     context.CancelFunc
+	pick     func() (string, error)
+	hide     func()
+	tray     func() bool
+	mu       sync.Mutex
+	trayOnly bool
+	running  map[string]session
+	token    string
+	smoke    bool
+	closed   bool
+	workers  sync.WaitGroup
 }
 
 func (p *panel) handler() http.Handler {
@@ -121,8 +128,44 @@ func (p *panel) serve(w http.ResponseWriter, r *http.Request, path string) {
 		for id, item := range p.running {
 			running[id] = item
 		}
+		trayOnly := p.trayOnly
 		p.mu.Unlock()
-		respond(w, map[string]any{"config": c, "adapters": names, "journal": p.storage.recent(), "running": running, "token": p.token, "smoke": p.smoke})
+		tray := p.tray()
+		respond(w, map[string]any{
+			"config": c, "adapters": names, "journal": p.storage.recent(), "running": running,
+			"token": p.token, "smoke": p.smoke, "trayOnly": trayOnly && tray, "trayAvailable": tray,
+		})
+	case "POST api/window-mode":
+		var preferences windowPreferences
+		if err := decode(w, r, &preferences); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if preferences.TrayOnly && !p.tray() {
+			http.Error(w, "Системный трей недоступен", http.StatusConflict)
+			return
+		}
+		p.mu.Lock()
+		err := p.storage.saveJSON("window.json", preferences)
+		if err == nil {
+			p.trayOnly = preferences.TrayOnly
+		}
+		p.mu.Unlock()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		respond(w, preferences)
+		if preferences.TrayOnly {
+			p.hide()
+		}
+	case "POST api/hide":
+		if !p.tray() {
+			http.Error(w, "Системный трей недоступен", http.StatusConflict)
+			return
+		}
+		respond(w, struct{}{})
+		p.hide()
 	case "POST api/policy":
 		var c config
 		if err := decode(w, r, &c); err != nil {

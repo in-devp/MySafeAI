@@ -11,6 +11,9 @@ struct Dashboard: View {
     static let size = CGSize(width: 370, height: 448)
 
     let model: MonitorModel
+    let inWindow: Bool
+    let windowAction: @MainActor () -> Void
+    let setTrayOnly: @MainActor @Sendable (Bool) -> Void
 
     private enum Page { case overview, protection, routes, addresses, settings, journal, leaks, policies, serviceRoutes }
     @State private var history: [Page] = []
@@ -56,7 +59,8 @@ struct Dashboard: View {
                 footer.padding(.horizontal, 16)
             }
         }
-        .frame(width: Self.size.width, height: Self.size.height)
+        .frame(minWidth: Self.size.width, maxWidth: inWindow ? .infinity : Self.size.width,
+               minHeight: inWindow ? 410 : Self.size.height, maxHeight: inWindow ? .infinity : Self.size.height)
         .font(.system(size: 13))
         .foregroundStyle(ink)
         .tint(mint)
@@ -83,7 +87,7 @@ struct Dashboard: View {
         case .addresses:
             AddressResults(results: model.addressResults)
         case .settings:
-            AddressSettings(model: model)
+            AddressSettings(model: model, setTrayOnly: setTrayOnly)
         case .journal:
             ProtectionJournalView(journal: model.protection.journal)
         case .leaks:
@@ -114,6 +118,10 @@ struct Dashboard: View {
             }
             if page != .settings {
                 iconButton("gearshape", label: "Настройки") { history.append(.settings) }
+            }
+            iconButton(inWindow ? "menubar.arrow.up.rectangle" : "macwindow",
+                       label: inWindow ? "Скрыть окно" : "Открыть в отдельном окне") {
+                windowAction()
             }
         }
         .frame(height: 46)
@@ -576,7 +584,9 @@ struct AddressResults: View {
 
 private struct AddressSettings: View {
     let model: MonitorModel
+    let setTrayOnly: @MainActor @Sendable (Bool) -> Void
     @State private var draft = ""
+    @AppStorage("trayOnly") private var trayOnly = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -594,6 +604,8 @@ private struct AddressSettings: View {
             }
 
             section("Работа в фоне") {
+                switchRow("Только в трее", icon: "menubar.rectangle", value: trayOnly, change: setTrayOnly)
+                PanelGroupDivider(inset: 44)
                 switchRow("Запускать при входе в macOS", icon: "person.crop.circle",
                           value: model.background.loginStatus == .enabled, change: model.background.setLaunchAtLogin)
                 if model.background.loginStatus == .requiresApproval {

@@ -4,6 +4,7 @@ const get = (id) => document.getElementById(id);
 const running = new Map();
 let verified = [];
 let sessionToken = "";
+let savingWindowMode = false;
 const navigation = [...document.querySelectorAll("[data-page]")];
 
 function showPage(page) {
@@ -60,6 +61,14 @@ function display(result) {
 async function refresh(first = false) {
   const state = await request("state");
   sessionToken = state.token;
+  if (!savingWindowMode) {
+    get("tray-only").checked = state.trayOnly;
+    get("tray-only").disabled = !state.trayAvailable;
+  }
+  get("hide-window").hidden = !state.trayAvailable;
+  get("tray-hint").textContent = state.trayAvailable
+    ? "MySafeAI запускается скрытым. Окно открывается из трея."
+    : "Для этого режима нужен системный трей.";
   if (first) {
     const adapters = new Set(state.adapters || []);
     if (state.config.adapter) adapters.add(state.config.adapter);
@@ -76,8 +85,14 @@ async function refresh(first = false) {
     for (const [id, session] of sessions) running.set(id, session);
     showRunning();
   }
-  if (state.smoke) {
+  if (first && state.smoke) {
     await request("policy", { adapter: "smoke", allowed: ["203.0.113.10"] });
+    if (state.trayAvailable) {
+      await request("window-mode", { trayOnly: true });
+    } else {
+      const refused = await request("window-mode", { trayOnly: true }).then(() => false, () => true);
+      if (!refused) throw new Error("tray-only mode must be refused without a tray");
+    }
     await request("exit", {});
   }
 }
@@ -164,6 +179,23 @@ action("launch", async () => {
   running.set(id, { name: command, state: "checking" });
   showRunning();
   get("notice").textContent = "Проверяем маршрут перед запуском.";
+});
+action("hide-window", () => request("hide", {}));
+get("tray-only").addEventListener("change", async (event) => {
+  const toggle = event.currentTarget;
+  const enabled = toggle.checked;
+  savingWindowMode = true;
+  toggle.disabled = true;
+  get("notice").textContent = "";
+  try {
+    await request("window-mode", { trayOnly: enabled });
+  } catch (error) {
+    toggle.checked = !enabled;
+    get("notice").textContent = error.message;
+  } finally {
+    savingWindowMode = false;
+    toggle.disabled = false;
+  }
 });
 action("exit", async () => {
   await request("exit", {});

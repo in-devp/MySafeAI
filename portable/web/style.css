@@ -15,7 +15,7 @@ body { margin: 0; height: 100vh; display: grid; grid-template-rows: auto minmax(
   padding: 10px 14px;
 }
 .header { border-bottom: 1px solid #343540; }
-.header button { margin-left: auto; }
+.header h1 { margin-right: auto; }
 h1 { margin: 0; font-size: 17px; letter-spacing: -.02em; }
 h2 { margin: 0 0 8px; font-size: 15px; }
 p { margin: 0; }
@@ -34,6 +34,8 @@ section {
 .status [data-state="trusted"] { color: #9ce9ca; }
 .status [data-state="denied"] { color: #ffca8c; }
 label { display: block; margin: 8px 0 4px; color: #c3c4d1; font-size: 12px; }
+.setting { display: flex; align-items: center; gap: 8px; color: inherit; font-size: 14px; }
+.setting input { width: auto; margin: 0; accent-color: #a9efd6; }
 input, select, textarea, button { font: inherit; }
 input, select, textarea {
   width: 100%;
