@@ -133,7 +133,7 @@ func (p *panel) serve(w http.ResponseWriter, r *http.Request, path string) {
 		tray := p.tray()
 		respond(w, map[string]any{
 			"config": c, "adapters": names, "journal": p.storage.recent(), "running": running,
-			"token": p.token, "smoke": p.smoke, "trayOnly": trayOnly && tray, "trayAvailable": tray,
+			"token": p.token, "smoke": p.smoke, "trayOnly": trayOnly && tray, "trayAvailable": tray, "canPick": p.pick != nil,
 		})
 	case "POST api/window-mode":
 		var preferences windowPreferences

@@ -1,0 +1,31 @@
+pkgname=mysafeai
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Local VPN route monitor and process protection'
+arch=('x86_64')
+url='https://github.com/in-devp/MySafeAI'
+license=('MIT')
+depends=('gtk4' 'webkitgtk-6.0' 'iproute2')
+makedepends=('go' 'pkgconf')
+source=("$pkgname-$pkgver.tar.gz")
+sha256sums=('SKIP') # CI generates this archive from the checked-out commit.
+
+build() {
+    cd "$srcdir/$pkgname-$pkgver/portable"
+    CGO_ENABLED=1 go build -mod=readonly -tags production -trimpath -o mysafeai .
+}
+
+check() {
+    cd "$srcdir/$pkgname-$pkgver/portable"
+    CGO_ENABLED=1 go test -mod=readonly -tags production ./...
+}
+
+package() {
+    cd "$srcdir/$pkgname-$pkgver"
+    install -Dm755 portable/mysafeai "$pkgdir/usr/bin/mysafeai"
+    install -Dm644 portable/packaging/app.mysafeai.desktop.desktop \
+        "$pkgdir/usr/share/applications/app.mysafeai.desktop.desktop"
+    install -Dm644 portable/web/tray.png \
+        "$pkgdir/usr/share/icons/hicolor/48x48/apps/app.mysafeai.desktop.png"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

@@ -66,6 +66,7 @@ async function refresh(first = false) {
     get("tray-only").disabled = !state.trayAvailable;
   }
   get("hide-window").hidden = !state.trayAvailable;
+  get("pick").hidden = !state.canPick;
   get("tray-hint").textContent = state.trayAvailable
     ? "MySafeAI запускается скрытым. Окно открывается из трея."
     : "Для этого режима нужен системный трей.";

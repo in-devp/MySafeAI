@@ -151,6 +151,9 @@ func startManaged(ctx context.Context, args []string, c config, checks routeChec
 		return 70, err
 	}
 	_ = gate.SetDeadline(time.Time{})
+	if controller, ok := tree.(interface{ attachGate(net.Conn) }); ok {
+		controller.attachGate(gate)
+	}
 	log(runRunning, "started "+filepath.Base(target[0]))
 
 	routeTick := time.NewTicker(500 * time.Millisecond)
@@ -267,8 +270,7 @@ func launchGate(args []string) (int, error) {
 	go func() { exited <- cmd.Wait() }()
 	parentGone := make(chan struct{})
 	go func() {
-		var buffer [1]byte
-		_, _ = gate.Read(buffer[:])
+		waitForGateClose(gate)
 		close(parentGone)
 	}()
 	select {

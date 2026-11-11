@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const usage = `MySafeAI for Windows and Linux
+const usage = `MySafeAI
   mysafeai                 Open the MySafeAI desktop app
   mysafeai check           Print the VPN route and IP checks as JSON
   mysafeai run -- command  Run a program under VPN monitoring
