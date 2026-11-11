@@ -9,37 +9,61 @@
   <script src="panel.js" defer></script>
 </head>
 <body>
+  <header class="header">
+    <img src="icon.svg" alt="" width="30" height="30">
+    <h1>MySafeAI</h1>
+    <button id="exit" class="quiet">Выйти</button>
+  </header>
   <main>
-    <header><img src="icon.svg" alt="" width="36" height="36"><h1>MySafeAI</h1><button id="exit" class="quiet">Выйти</button></header>
-    <section class="status" aria-live="polite">
-      <p id="status">Подключите VPN и выберите его адаптер.</p>
-      <strong id="ip"></strong>
-      <ul id="providers"></ul>
-      <button id="check">Проверить маршрут</button>
-    </section>
-    <section class="card">
+    <div id="overview-page">
+      <section class="status" aria-live="polite">
+        <p id="status">Подключите VPN</p>
+        <strong id="ip"></strong>
+        <p id="route-note" class="hint">Выберите VPN-адаптер и проверьте маршрут.</p>
+        <details id="diagnostics" hidden>
+          <summary>Ответы источников</summary>
+          <ul id="providers"></ul>
+        </details>
+        <div class="actions"><button id="check">Проверить маршрут</button></div>
+      </section>
+      <section class="card">
+        <h2>Запуск под защитой</h2>
+        <label for="command">Путь к программе или имя команды</label>
+        <input id="command" placeholder="cursor или C:\Путь\Программа.exe">
+        <details>
+          <summary>Аргументы запуска</summary>
+          <label for="args">По одному аргументу на строку</label>
+          <textarea id="args" rows="2"></textarea>
+        </details>
+        <div class="actions"><button id="launch">Запустить</button></div>
+        <ul id="running"></ul>
+        <p class="hint">Для интерактивных команд используйте <code>mysafeai run -- codex</code> в терминале.</p>
+      </section>
+    </div>
+    <section class="card" id="policy-page" hidden>
       <h2>Правило подключения</h2>
       <label for="adapter">VPN-адаптер</label>
       <select id="adapter"></select>
       <label for="allowed">Доверенные IP и подсети</label>
-      <textarea id="allowed" rows="3" placeholder="203.0.113.42&#10;2001:db8::/48"></textarea>
-      <div class="actions"><button id="save">Сохранить правило</button><button id="trust" class="quiet" hidden>Добавить проверенные IP</button></div>
+      <textarea id="allowed" rows="5" placeholder="203.0.113.42&#10;2001:db8::/48"></textarea>
+      <div class="actions">
+        <button id="policy-check" class="quiet">Проверить</button>
+        <button id="save">Сохранить</button>
+        <button id="trust" class="quiet" hidden>Добавить проверенные IP</button>
+      </div>
+      <p id="policy-result" class="hint" role="status"></p>
     </section>
-    <section class="card">
-      <h2>Запуск под защитой</h2>
-      <label for="command">Путь к программе или имя команды</label>
-      <input id="command" placeholder="cursor или C:\Путь\Программа.exe">
-      <label for="args">Аргументы, по одному на строку</label>
-      <textarea id="args" rows="2"></textarea>
-      <div class="actions"><button id="launch">Запустить</button></div>
-      <ul id="running"></ul>
-      <p class="hint">Для интерактивных команд используйте <code>mysafeai run -- codex</code> в терминале.</p>
-    </section>
-    <section class="card">
+    <section class="card" id="journal-page" hidden>
       <h2>Журнал</h2>
+      <p id="journal-empty" class="hint">Здесь появятся запуски, паузы и ошибки защиты.</p>
       <ul id="journal"></ul>
     </section>
     <p id="notice" role="status"></p>
   </main>
+  <nav class="navigation" aria-label="Разделы MySafeAI">
+    <button type="button" data-page="overview" aria-pressed="true">Обзор</button>
+    <button type="button" data-page="policy" aria-pressed="false">Правило</button>
+    <button type="button" data-page="journal" aria-pressed="false">Журнал</button>
+  </nav>
 </body>
 </html>

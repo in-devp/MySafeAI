@@ -56,7 +56,7 @@ jobs:
         shell: bash
         working-directory: portable
     env:
-      CGO_ENABLED: "0"
+      CGO_ENABLED: ${{ runner.os == 'Linux' && '1' || '0' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -65,26 +65,54 @@ jobs:
         with:
           go-version: "1.26.x"
           cache-dependency-path: portable/go.sum
+      - name: Install Linux desktop libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev xvfb xauth dbus-x11
+      - name: Add Windows application icon and manifest
+        if: runner.os == 'Windows'
+        run: |
+          go run github.com/tc-hib/go-winres@v0.3.3 simply --arch "$(go env GOARCH)" --manifest gui --product-name MySafeAI --file-description MySafeAI --icon web/tray.png
       - name: Test the policy and process control
         run: |
-          go vet ./...
-          go test -v ./...
-      - name: Build and smoke test
+          go vet -tags production ./...
+          go test -tags production -v ./...
+      - name: Build the application
         run: |
           mkdir -p ../dist/package
-          go build -trimpath -o "../dist/package/${{ matrix.bin }}" .
+          go build -tags production -trimpath -o "../dist/package/${{ matrix.bin }}" .
           "../dist/package/${{ matrix.bin }}" --help
           cp ../LICENSE ../README.md ../dist/package/
+      - name: Open and verify the Linux desktop window
+        if: runner.os == 'Linux'
+        run: xvfb-run -a dbus-run-session -- ../dist/package/mysafeai _smoke-ui
+      - name: Open and verify the Windows desktop window
+        if: runner.os == 'Windows'
+        run: ../dist/package/mysafeai.exe _smoke-ui
+      - name: Build the Windows desktop launcher
+        if: runner.os == 'Windows'
+        run: go build -tags production -trimpath -ldflags="-H windowsgui" -o ../dist/package/MySafeAI-Desktop.exe .
       - name: Archive Linux binary
         if: runner.os == 'Linux'
         run: tar -czf "../dist/MySafeAI-Linux-${{ matrix.arch }}.tar.gz" -C ../dist/package mysafeai LICENSE README.md
+      - name: Package Linux desktop launcher
+        if: runner.os == 'Linux'
+        run: ./packaging/linux-deb.sh ../dist/package/mysafeai "../dist/MySafeAI-Linux-${{ matrix.arch }}.deb"
       - name: Archive Windows binary
         if: runner.os == 'Windows'
         shell: pwsh
         run: Compress-Archive -Path ../dist/package/* -DestinationPath "../dist/MySafeAI-Windows-${{ matrix.arch }}.zip"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          path: dist/MySafeAI-${{ matrix.platform }}-${{ matrix.arch }}.*
+          path: dist/MySafeAI-${{ matrix.platform }}-${{ matrix.arch }}.${{ runner.os == 'Linux' && 'tar.gz' || 'zip' }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: runner.os == 'Linux'
+        with:
+          path: dist/MySafeAI-Linux-${{ matrix.arch }}.deb
           archive: false
           if-no-files-found: error
           retention-days: 30

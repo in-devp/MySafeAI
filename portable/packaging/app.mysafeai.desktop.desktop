@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=MySafeAI
+Comment=VPN route monitor and process protection
+Exec=mysafeai
+Icon=app.mysafeai.desktop
+Terminal=false
+Categories=Network;Utility;
+StartupWMClass=app.mysafeai.desktop

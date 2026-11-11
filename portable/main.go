@@ -14,8 +14,7 @@ import (
 )
 
 const usage = `MySafeAI for Windows and Linux
-  mysafeai                 Open the local desktop panel
-  mysafeai ui --no-open    Print the local panel URL
+  mysafeai                 Open the MySafeAI desktop app
   mysafeai check           Print the VPN route and IP checks as JSON
   mysafeai run -- command  Run a program under VPN monitoring
 `
@@ -118,16 +117,24 @@ func run(ctx context.Context, args []string) (int, error) {
 		fmt.Print(usage)
 		return 0, nil
 	}
+	if args[0] == "_smoke-ui" && len(args) == 1 {
+		dir, err := os.MkdirTemp("", "mysafeai-ui-")
+		if err != nil {
+			return 1, err
+		}
+		defer os.RemoveAll(dir)
+		return 0, runDesktop(ctx, storage{dir}, true)
+	}
 	s, err := localStorage()
 	if err != nil {
 		return 1, err
 	}
 	switch args[0] {
 	case "ui":
-		if len(args) > 2 || len(args) == 2 && args[1] != "--no-open" {
-			return 64, errors.New("usage: mysafeai ui [--no-open]")
+		if len(args) != 1 {
+			return 64, errors.New("usage: mysafeai ui")
 		}
-		return 0, servePanel(ctx, s, len(args) == 1)
+		return 0, runDesktop(ctx, s, false)
 	case "check":
 		if len(args) != 1 {
 			return 64, errors.New("usage: mysafeai check")

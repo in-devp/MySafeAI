@@ -2,3 +2,4 @@
 .swiftpm/
 dist/
 .DS_Store
+portable/rsrc_windows_*.syso

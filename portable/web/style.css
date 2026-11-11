@@ -1,29 +1,70 @@
-:root { color-scheme: dark; font: 15px/1.5 system-ui, sans-serif; background: #14151b; color: #f0f0f5; }
+:root {
+  color-scheme: dark;
+  font: 14px/1.45 system-ui, sans-serif;
+  color: #f0f0f5;
+  background: #14151b;
+}
 * { box-sizing: border-box; }
-body { margin: 0; }
-main { width: min(100% - 32px, 640px); margin: 30px auto 48px; }
-header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
-header button { margin-left: auto; }
-h1 { margin: 0; font-size: 23px; letter-spacing: -.025em; }
-h2 { margin: 0 0 12px; font-size: 16px; }
+[hidden] { display: none !important; }
+body { margin: 0; height: 100vh; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+.header, .navigation {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: #1a1b23;
+  padding: 10px 14px;
+}
+.header { border-bottom: 1px solid #343540; }
+.header button { margin-left: auto; }
+h1 { margin: 0; font-size: 17px; letter-spacing: -.02em; }
+h2 { margin: 0 0 8px; font-size: 15px; }
 p { margin: 0; }
-section { margin-bottom: 12px; border: 1px solid #353640; border-radius: 16px; padding: 16px; background: #1c1d24; }
-.status { background: linear-gradient(145deg,#263530,#1e2429); border-color: #466257; }
-.status strong { display: block; margin: 4px 0; font-size: clamp(18px, 6vw, 32px); overflow-wrap: anywhere; }
+main { overflow: auto; padding: 12px; scrollbar-width: thin; }
+section {
+  margin-bottom: 10px;
+  border: 1px solid #383947;
+  border-radius: 14px;
+  padding: 13px;
+  background: #1c1e27;
+}
+.status { background: linear-gradient(145deg, #263531, #1d242a); border-color: #446259; }
+.status p:first-child { font-weight: 650; }
+.status strong { display: block; margin: 4px 0; font-size: 27px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.status strong:empty { display: none; }
 .status [data-state="trusted"] { color: #9ce9ca; }
 .status [data-state="denied"] { color: #ffca8c; }
-label { display: block; margin: 12px 0 5px; color: #c3c4d1; font-size: 13px; }
+label { display: block; margin: 8px 0 4px; color: #c3c4d1; font-size: 12px; }
 input, select, textarea, button { font: inherit; }
-input, select, textarea { width: 100%; border: 1px solid #4b4c59; border-radius: 8px; background: #181922; color: inherit; padding: 8px 10px; }
+input, select, textarea {
+  width: 100%;
+  border: 1px solid #4b4c59;
+  border-radius: 8px;
+  background: #171922;
+  color: inherit;
+  padding: 7px 9px;
+}
 textarea { resize: vertical; }
-button { border: 1px solid transparent; border-radius: 9px; background: #a9efd6; color: #13251f; padding: 8px 12px; font-weight: 650; cursor: pointer; }
-button.quiet { background: #2c2e39; border-color: #464856; color: #f0f0f5; }
+button {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #a9efd6;
+  color: #13251f;
+  padding: 7px 10px;
+  font-weight: 650;
+  cursor: pointer;
+}
+button.quiet { background: #2c2e39; border-color: #454755; color: #f0f0f5; }
 button:disabled { opacity: .55; cursor: wait; }
-:focus-visible { outline: 2px solid #dbd1ff; outline-offset: 3px; }
-.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-ul { list-style: none; padding: 0; margin: 8px 0; }
-li { border-top: 1px solid #353640; padding: 6px 0; overflow-wrap: anywhere; }
-#running li { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-#journal { font-size: 13px; color: #cdced7; }
+:focus-visible { outline: 2px solid #dbd1ff; outline-offset: 2px; }
+.navigation { border-top: 1px solid #343540; justify-content: space-between; }
+.navigation button { flex: 1; background: transparent; color: #bbbcca; }
+.navigation button[aria-pressed="true"] { background: #333242; color: #f4efff; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+details { margin-top: 8px; }
+summary { color: #d1d1df; cursor: pointer; font-size: 12px; }
+ul { list-style: none; padding: 0; margin: 6px 0; }
+li { border-top: 1px solid #353640; padding: 5px 0; overflow-wrap: anywhere; }
+#running li { display: flex; align-items: center; justify-content: space-between; gap: 9px; }
+#journal { font-size: 12px; color: #cdced7; }
 #notice { color: #ffca8c; overflow-wrap: anywhere; }
-.hint { font-size: 13px; color: #b9bac8; margin-top: 10px; }
+.hint { font-size: 12px; color: #b9bac8; margin-top: 5px; }

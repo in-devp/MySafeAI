@@ -3,11 +3,25 @@
 const get = (id) => document.getElementById(id);
 const running = new Map();
 let verified = [];
+let sessionToken = "";
+const navigation = [...document.querySelectorAll("[data-page]")];
+
+function showPage(page) {
+  for (const button of navigation) {
+    const current = button.dataset.page === page;
+    button.setAttribute("aria-pressed", current);
+    get(button.dataset.page + "-page").hidden = !current;
+  }
+}
+
+for (const button of navigation) {
+  button.addEventListener("click", () => showPage(button.dataset.page));
+}
 
 async function request(path, body) {
   const response = await fetch("api/" + path, body === undefined ? {} : {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "X-MySafeAI-Token": sessionToken },
     body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error((await response.text()).trim());
@@ -33,8 +47,10 @@ function display(result) {
   get("status").textContent = result.trusted ? "Маршрут подтверждён" : "Маршрут не разрешён";
   get("status").dataset.state = result.trusted ? "trusted" : "denied";
   get("ip").textContent = (result.ips || []).join(" · ");
+  get("route-note").textContent = result.reason;
+  get("policy-result").textContent = [result.reason, ...(result.ips || [])].join(" · ");
+  get("diagnostics").hidden = !(result.probes || []).length;
   list(get("providers"), [
-    result.reason,
     ...(result.probes || []).map((p) => p.name + " · " + (p.ip || p.error)),
   ]);
   verified = result.trusted ? [] : (result.ips || []);
@@ -43,6 +59,7 @@ function display(result) {
 
 async function refresh(first = false) {
   const state = await request("state");
+  sessionToken = state.token;
   if (first) {
     const adapters = new Set(state.adapters || []);
     if (state.config.adapter) adapters.add(state.config.adapter);
@@ -50,10 +67,16 @@ async function refresh(first = false) {
     get("adapter").value = state.config.adapter || "";
     get("allowed").value = (state.config.allowed || []).join("\n");
   }
-  list(get("journal"), state.journal.filter(Boolean).reverse());
-  running.clear();
-  for (const [id, name] of Object.entries(state.running)) running.set(id, name);
-  showRunning();
+  const entries = state.journal.filter(Boolean).reverse();
+  get("journal-empty").hidden = entries.length !== 0;
+  list(get("journal"), entries);
+  const sessions = Object.entries(state.running);
+  if (sessions.length !== running.size || sessions.some(([id, name]) => running.get(id) !== name)) {
+    running.clear();
+    for (const [id, name] of sessions) running.set(id, name);
+    showRunning();
+  }
+  if (state.smoke) await request("exit", {});
 }
 
 function action(id, run) {
@@ -99,8 +122,21 @@ get("adapter").addEventListener("change", () => {
   delete get("status").dataset.state;
   get("ip").textContent = "";
   get("providers").replaceChildren();
+  get("diagnostics").hidden = true;
+  get("route-note").textContent = "Выберите VPN-адаптер и проверьте маршрут.";
+  get("policy-result").textContent = "";
 });
-action("check", async () => display(await request("check", policy())));
+async function checkRoute() {
+  if (!policy().adapter) {
+    showPage("policy");
+    get("adapter").focus();
+    return;
+  }
+  display(await request("check", policy()));
+  if (verified.length) showPage("policy");
+}
+action("check", checkRoute);
+action("policy-check", checkRoute);
 action("trust", () => {
   get("allowed").value = [...new Set([...policy().allowed, ...verified])].join("\n");
   get("notice").textContent = "Адреса добавлены. Сохраните правило.";
@@ -119,7 +155,7 @@ action("launch", async () => {
 });
 action("exit", async () => {
   await request("exit", {});
-  window.location.reload();
+  get("notice").textContent = "MySafeAI завершает работу.";
 });
 
 refresh(true).catch((error) => { get("notice").textContent = error.message; });

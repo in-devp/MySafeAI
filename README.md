@@ -1,12 +1,15 @@
 # MySafeAI
 
-Локальный монитор сетевых маршрутов и процессный VPN kill switch для macOS, Windows и Linux. В macOS панель открывается из строки меню. В Windows и Linux значок в трее открывает локальную панель в браузере.
+Локальный монитор сетевых маршрутов и процессный VPN kill switch для macOS, Windows и Linux. В macOS панель открывается из строки меню. В Windows и Linux MySafeAI открывает собственное окно и доступен из системного трея.
 
 [Сборки и результаты CI](https://github.com/in-devp/MySafeAI/actions/workflows/ci.yml) доступны в разделе Artifacts у успешного запуска.
 
 ## Windows и Linux
 
-Распакуйте архив для своей системы и архитектуры, затем запустите `mysafeai.exe` в Windows или `./mysafeai` в Linux. Нужны Windows 10 или новее либо Linux с ядром 5.3+, `iproute2` и браузером. Значок в Linux появляется в окружениях с поддержкой StatusNotifierItem. Панель можно открыть и по адресу, который MySafeAI печатает в терминал. Настройки и журнал хранятся в `%APPDATA%\MySafeAI` или `${XDG_CONFIG_HOME:-~/.config}/MySafeAI`.
+- **Windows.** Распакуйте ZIP и откройте `MySafeAI-Desktop.exe`. Для команд в терминале используйте `mysafeai.exe`. Требуются Windows 10 или новее и Microsoft WebView2 Runtime.
+- **Linux.** Установите `.deb` на Ubuntu 24.04 или совместимой системе и откройте MySafeAI из меню приложений. Из `.tar.gz` можно запустить `./mysafeai`; нужны ядро 5.3+, `iproute2`, GTK4 и WebKitGTK 6.0. Значок в трее появляется в окружениях с поддержкой StatusNotifierItem.
+
+Настройки и журнал хранятся в `%APPDATA%\MySafeAI` или `${XDG_CONFIG_HOME:-~/.config}/MySafeAI`.
 
 1. Включите VPN в режиме полного туннеля. Выберите его адаптер в панели и нажмите «Проверить маршрут».
 2. Добавьте проверенные адреса в доверенные или укажите свои IP и подсети CIDR. Сохраните правило.
@@ -23,12 +26,12 @@ mysafeai run -- codex
 
 Порт защищает программы, запущенные через панель или `mysafeai run`. Автоматический поиск уже открытых приложений, правила отдельных сервисов и системного прокси, диагностика DNS, страны, доверенные локальные сети и автозапуск доступны в macOS. Процессный контроль работает по результатам проверок маршрута и не является системным фильтром пакетов.
 
-Сборка Windows и Linux из исходников требует Go 1.26:
+Сборка требует Go 1.26. На Linux нужны пакеты разработки `libgtk-4-dev` и `libwebkitgtk-6.0-dev`.
 
 ```sh
 cd portable
-go test ./...
-go build -trimpath .
+go test -tags production ./...
+go build -tags production -trimpath .
 ```
 
 ## Что работает в macOS

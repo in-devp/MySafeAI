@@ -2,20 +2,17 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"errors"
 	"io"
-	"log"
 	"mime"
 	"net"
 	"net/http"
-	"os/exec"
-	"runtime"
 	"sort"
 	"strings"
 	"sync"
-	"time"
 )
 
 //go:embed web/*
@@ -32,74 +29,34 @@ type panel struct {
 	stop    context.CancelFunc
 	mu      sync.Mutex
 	running map[string]session
+	token   string
+	smoke   bool
+	closed  bool
+	workers sync.WaitGroup
 }
 
-func servePanel(ctx context.Context, storage storage, browser bool) error {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		return err
-	}
-	defer listener.Close()
-	host := listener.Addr().String()
-	origin := "http://" + host
-	prefix := "/" + secret() + "/"
-	ui := panel{storage: storage, ctx: ctx, stop: cancel, running: make(map[string]session)}
-	server := &http.Server{
-		ReadHeaderTimeout: 3 * time.Second,
-		ReadTimeout:       5 * time.Second,
-		WriteTimeout:      12 * time.Second,
-		IdleTimeout:       20 * time.Second,
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			path, ok := strings.CutPrefix(r.URL.Path, prefix)
-			if r.Host != host || !ok {
-				http.NotFound(w, r)
-				return
-			}
-			w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
-			w.Header().Set("Referrer-Policy", "no-referrer")
-			w.Header().Set("X-Content-Type-Options", "nosniff")
-			w.Header().Set("Cache-Control", "no-store")
-			if r.Method == http.MethodPost && r.Header.Get("Origin") != origin {
-				http.Error(w, "invalid origin", http.StatusForbidden)
-				return
-			}
-			ui.serve(w, r, path)
-		}),
-	}
-	go func() {
-		<-ctx.Done()
-		shutdown, finish := context.WithTimeout(context.Background(), 3*time.Second)
-		defer finish()
-		_ = server.Shutdown(shutdown)
-	}()
-	url := origin + prefix
-	log.Println("MySafeAI:", url)
-	if browser {
-		startTray(ctx, url, cancel)
-		if err := openBrowser(url); err != nil {
-			log.Println("Open the URL above in your browser:", err)
+func (p *panel) handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; script-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Cache-Control", "no-store")
+		if r.Method == http.MethodPost && subtle.ConstantTimeCompare([]byte(r.Header.Get("X-MySafeAI-Token")), []byte(p.token)) != 1 {
+			http.Error(w, "invalid session", http.StatusForbidden)
+			return
 		}
-	}
-	err = server.Serve(listener)
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
-	}
-	return err
+		p.serve(w, r, strings.TrimPrefix(r.URL.Path, "/"))
+	})
 }
 
-func openBrowser(url string) error {
-	switch runtime.GOOS {
-	case "windows":
-		return exec.Command("rundll32.exe", "url.dll,FileProtocolHandler", url).Start()
-	case "linux":
-		return exec.Command("xdg-open", url).Start()
-	case "darwin":
-		return exec.Command("open", url).Start()
-	default:
-		return errors.New("open the URL manually")
+func (p *panel) shutdown() {
+	p.mu.Lock()
+	p.closed = true
+	for _, item := range p.running {
+		item.cancel()
 	}
+	p.mu.Unlock()
+	p.workers.Wait()
 }
 
 func respond(w http.ResponseWriter, value any) {
@@ -157,7 +114,7 @@ func (p *panel) serve(w http.ResponseWriter, r *http.Request, path string) {
 			running[id] = session.name
 		}
 		p.mu.Unlock()
-		respond(w, map[string]any{"config": c, "adapters": names, "journal": p.storage.recent(), "running": running})
+		respond(w, map[string]any{"config": c, "adapters": names, "journal": p.storage.recent(), "running": running, "token": p.token, "smoke": p.smoke})
 	case "POST api/policy":
 		var c config
 		if err := decode(w, r, &c); err != nil {
@@ -193,7 +150,7 @@ func (p *panel) serve(w http.ResponseWriter, r *http.Request, path string) {
 		}
 		p.mu.Lock()
 		defer p.mu.Unlock()
-		if len(p.running) >= 8 {
+		if p.closed || len(p.running) >= 8 {
 			http.Error(w, "the panel already manages eight programs", http.StatusConflict)
 			return
 		}
@@ -205,7 +162,9 @@ func (p *panel) serve(w http.ResponseWriter, r *http.Request, path string) {
 		id := secret()
 		ctx, cancel := context.WithCancel(p.ctx)
 		p.running[id] = session{strings.TrimSpace(request.Command), cancel}
+		p.workers.Add(1)
 		go func() {
+			defer p.workers.Done()
 			defer cancel()
 			defer func() {
 				p.mu.Lock()
