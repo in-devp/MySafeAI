@@ -42,7 +42,7 @@ final class MonitorModel {
 
     init() {
         let defaults = UserDefaults.standard
-        observesDNSExternally = defaults.object(forKey: Self.dnsObservationKey) as? Bool ?? true
+        observesDNSExternally = defaults.bool(forKey: Self.dnsObservationKey)
         let saved = defaults.data(forKey: Self.addressSettingsKey).flatMap {
             try? JSONDecoder().decode(AddressSourceSettings.self, from: $0)
         }

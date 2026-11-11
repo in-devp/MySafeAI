@@ -633,11 +633,11 @@ private struct AddressSettings: View {
                 Text("Защита сверяет IP у двух источников. Включённые сервисы видят IP входящего запроса.")
             }
 
-            section("Активная проверка DNS") {
+            section("Внешняя проверка DNS") {
                 switchRow("Проверять резолверы извне", icon: "server.rack",
                           value: model.observesDNSExternally, change: model.setObservesDNSExternally)
             } hint: {
-                Text("По кнопке «Проверить утечки» dnsleak.dev увидит IP устройства и DNS-серверов. Тест использует случайные имена и системный резолвер macOS.")
+                Text("Маршруты DNS проверяются локально. При включении этой опции «Проверить утечки» также запустит тест на dnsleak.dev. Сервис увидит IP устройства и адреса резолверов.")
             }
 
             section("Свои HTTPS-источники") {

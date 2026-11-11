@@ -76,7 +76,7 @@ struct LeakCheckView: View {
 
             Text(model.observesDNSExternally
                  ? "IP проверяют выбранные HTTPS-источники. DNS-тест использует dnsleak.dev: сервис видит IP устройства и резолверов. Отключается в настройках."
-                 : "Внешний DNS-тест выключен. Проверяются системные маршруты к DNS-серверам.")
+                 : "Маршруты к DNS-серверам проверяются локально. Для проверки внешнего IP используются выбранные HTTPS-источники.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
