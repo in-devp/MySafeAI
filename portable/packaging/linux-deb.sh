@@ -18,7 +18,7 @@ Architecture: $arch
 Maintainer: MySafeAI contributors <36034823+in-devp@users.noreply.github.com>
 Section: net
 Priority: optional
-Depends: iproute2, libgtk-4-1, libwebkitgtk-6.0-4
+Depends: iproute2, libgtk-4-1, libwebkitgtk-6.0-4, glib-networking
 Homepage: https://github.com/in-devp/MySafeAI
 Description: Local VPN route monitor and process protection
  MySafeAI verifies VPN routes and monitors programs launched under its protection.

@@ -15,6 +15,7 @@ static const char *desktop_url;
 static const char *icon_dir;
 static gint tray_available;
 static gboolean start_hidden;
+static gboolean primary_desktop;
 
 static gboolean decide_navigation(WebKitWebView *view, WebKitPolicyDecision *decision,
                                   WebKitPolicyDecisionType type, gpointer unused) {
@@ -51,6 +52,7 @@ static gboolean close_window(GtkWindow *window, gpointer unused) {
 }
 
 static void activate(GtkApplication *app, gpointer unused) {
+    primary_desktop = TRUE;
     if (desktop_window) {
         gtk_window_present(desktop_window);
         return;
@@ -102,6 +104,7 @@ static void request_quit(void) {
 
 static void request_show(void) { g_idle_add(show_desktop, NULL); }
 static void request_hide(void) { g_idle_add(hide_desktop, NULL); }
+static gboolean was_primary_desktop(void) { return primary_desktop; }
 
 static void set_tray_available(gint available) {
     if (g_atomic_int_exchange(&tray_available, available) && !available) {
@@ -185,11 +188,17 @@ func runDesktop(parent context.Context, s storage, smoke bool) error {
 		smoke: smoke, tray: hasTray.Load, trayOnly: trayOnly, hide: func() { C.request_hide() }}
 	defer func() {
 		cancel()
+		if C.was_primary_desktop() == 0 {
+			ui.monitor = nil
+		}
 		ui.shutdown()
 	}()
 	ui.stop = func() {
 		ready.Store(true)
 		C.request_quit()
+	}
+	if !smoke {
+		ui.monitor = startWatchClient(ctx, s, func() { C.request_show() })
 	}
 
 	host := listener.Addr().String()
@@ -240,7 +249,7 @@ func runDesktop(parent context.Context, s storage, smoke bool) error {
 	icons := C.CString(iconDir)
 	defer C.free(unsafe.Pointer(icons))
 	var hidden C.gboolean
-	if trayOnly {
+	if trayOnly || startsInBackground(parent) {
 		hidden = 1
 	}
 	if status := C.run_desktop(url, icons, hidden); status != 0 {

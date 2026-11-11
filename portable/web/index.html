@@ -25,7 +25,29 @@
           <summary>Ответы источников</summary>
           <ul id="providers"></ul>
         </details>
-        <div class="actions"><button id="check">Проверить маршрут</button></div>
+        <div class="actions">
+          <button id="check">Проверить маршрут</button>
+          <button id="leak-check" class="quiet">Проверить утечки</button>
+        </div>
+      </section>
+      <section class="card" id="approval-card" hidden aria-live="polite">
+        <h2>Разрешить новый IP?</h2>
+        <p id="approval-ip" class="approval-ip"></p>
+        <p id="approval-target" class="hint"></p>
+        <div class="actions">
+          <button id="approve-ip">Разрешить IP</button>
+          <button id="decline-ip" class="quiet">Не разрешать</button>
+        </div>
+      </section>
+      <section class="card" id="watch-card" aria-live="polite">
+        <h2>Защита приложений</h2>
+        <p id="watch-status" class="hint"></p>
+        <ul id="watched-apps" class="app-list"></ul>
+      </section>
+      <section class="card" id="leak-result" hidden aria-live="polite">
+        <h2>Проверка утечек</h2>
+        <ul id="leak-findings"></ul>
+        <details><summary>Ответы источников IP</summary><ul id="leak-providers"></ul></details>
       </section>
       <section class="card">
         <h2>Запуск под защитой</h2>
@@ -50,12 +72,43 @@
       <select id="adapter"></select>
       <label for="allowed">Доверенные IP и подсети</label>
       <textarea id="allowed" rows="5" placeholder="203.0.113.42&#10;2001:db8::/48"></textarea>
+      <label for="countries">Разрешённые страны</label>
+      <input id="countries" placeholder="NL, DE">
       <div class="actions">
         <button id="policy-check" class="quiet">Проверить</button>
         <button id="save">Сохранить</button>
         <button id="trust" class="quiet" hidden>Добавить проверенные IP</button>
       </div>
       <p id="policy-result" class="hint" role="status"></p>
+      <details class="settings-group">
+        <summary>Правила приложений</summary>
+        <label for="app-rule-target">Приложение</label>
+        <select id="app-rule-target"></select>
+        <label for="app-rule-mode">Подключение</label>
+        <select id="app-rule-mode">
+          <option value="tunnel">Полный VPN</option>
+          <option value="service">VPN до сервисов приложения</option>
+          <option value="proxy">Системный прокси / PAC</option>
+        </select>
+        <label class="setting"><input id="app-rule-override" type="checkbox"> Свой список IP, подсетей и стран</label>
+        <label for="app-rule-ips">IP и подсети</label>
+        <textarea id="app-rule-ips" rows="3"></textarea>
+        <label for="app-rule-countries">Страны</label>
+        <input id="app-rule-countries" placeholder="NL, DE">
+        <label class="setting"><input id="app-rule-local" type="checkbox"> Разрешать доверенные сети</label>
+        <div class="actions">
+          <button id="save-app-rule">Сохранить правило</button>
+          <button id="reset-app-rule" class="quiet">Сбросить</button>
+        </div>
+      </details>
+      <details class="settings-group">
+        <summary>Доверенные сети</summary>
+        <ul id="trusted-networks"></ul>
+        <label for="network-name">Название текущей сети</label>
+        <input id="network-name" placeholder="Дом">
+        <p class="hint">Проверьте, что сейчас подключены к этой сети напрямую. Для допуска сверяются шлюз и внешние IP.</p>
+        <div class="actions"><button id="save-network">Добавить текущую сеть</button></div>
+      </details>
     </section>
     <section class="card" id="journal-page" hidden>
       <h2>Журнал</h2>
@@ -69,6 +122,43 @@
         Только в трее
       </label>
       <p id="tray-hint" class="hint">MySafeAI запускается скрытым. Окно открывается из трея.</p>
+      <label class="setting"><input id="login-start" type="checkbox"> Запускать при входе в систему</label>
+      <details class="settings-group" open>
+        <summary>Защита приложений</summary>
+        <label class="setting"><input id="watch-enabled" type="checkbox"> Следить за запущенными приложениями</label>
+        <div id="watch-targets"></div>
+        <label for="custom-name">Название приложения</label>
+        <input id="custom-name" placeholder="Моё приложение">
+        <label for="custom-path">Полный путь к программе</label>
+        <div class="program-picker">
+          <input id="custom-path">
+          <button id="pick-custom" class="quiet">Выбрать…</button>
+        </div>
+        <div class="actions"><button id="add-custom" class="quiet">Добавить приложение</button></div>
+      </details>
+      <details class="settings-group">
+        <summary>Поведение защиты</summary>
+        <label class="setting"><input id="close-delay" type="checkbox"> Закрывать приложения после 20 секунд паузы</label>
+        <label class="setting"><input id="block-dns" type="checkbox"> Ставить на паузу при неподтверждённом маршруте DNS</label>
+        <label class="setting"><input id="observe-dns" type="checkbox"> Проверять резолверы через bash.ws</label>
+        <p class="hint">Внешний тест запускается по кнопке «Проверить утечки». bash.ws увидит IP устройства и резолверов.</p>
+        <label class="setting"><input id="notifications" type="checkbox"> Системные уведомления</label>
+      </details>
+      <div class="actions"><button id="save-watch">Сохранить настройки защиты</button></div>
+      <details class="settings-group">
+        <summary>Источники проверки IP</summary>
+        <div id="ip-sources"></div>
+        <ul id="custom-sources"></ul>
+        <label for="source-name">Название источника</label>
+        <input id="source-name" placeholder="Мой сервер">
+        <label for="source-url">HTTPS-адрес</label>
+        <input id="source-url" type="url" placeholder="https://example.com/ip">
+        <label class="setting"><input id="source-ipv6" type="checkbox"> Источник IPv6</label>
+        <div class="actions">
+          <button id="add-source" class="quiet">Добавить источник</button>
+          <button id="save-sources">Сохранить источники</button>
+        </div>
+      </details>
     </section>
     <p id="notice" role="status"></p>
   </main>

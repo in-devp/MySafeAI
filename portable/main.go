@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -43,7 +44,7 @@ func (s storage) load() (config, error) {
 }
 
 func (s storage) save(c config) error {
-	if err := c.validate(); err != nil {
+	if err := c.validatePolicy(); err != nil {
 		return err
 	}
 	return s.saveJSON("portable.json", c)
@@ -90,13 +91,19 @@ func (s storage) recent() []string {
 		return []string{}
 	}
 	defer f.Close()
-	if info, err := f.Stat(); err == nil && info.Size() > 16384 {
-		_, _ = f.Seek(info.Size()-16384, io.SeekStart)
+	const window = 131072
+	var tail bool
+	if info, err := f.Stat(); err == nil && info.Size() > window {
+		_, _ = f.Seek(info.Size()-window, io.SeekStart)
+		tail = true
 	}
-	data, _ := io.ReadAll(io.LimitReader(f, 16384))
+	data, _ := io.ReadAll(io.LimitReader(f, window))
 	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-	if len(lines) > 12 {
-		lines = lines[len(lines)-12:]
+	if tail && len(lines) > 1 {
+		lines = lines[1:]
+	}
+	if len(lines) > 250 {
+		lines = lines[len(lines)-250:]
 	}
 	return lines
 }
@@ -107,7 +114,7 @@ func main() {
 		code, err := launchGate(args[1:])
 		finish(code, err)
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	code, err := run(ctx, args)
 	cancel()
 	finish(code, err)
@@ -147,11 +154,16 @@ func run(ctx context.Context, args []string) (int, error) {
 		return 1, err
 	}
 	switch args[0] {
-	case "ui":
+	case "ui", "background":
 		if len(args) != 1 {
 			return 64, errors.New("usage: mysafeai ui")
 		}
-		return 0, runDesktop(ctx, s, false)
+		return 0, runDesktop(withBackgroundStart(ctx, args[0] == "background"), s, false)
+	case "_watch":
+		if len(args) != 1 {
+			return 64, errors.New("invalid observer arguments")
+		}
+		return 0, runWatchWorker(ctx, s)
 	case "check":
 		if len(args) != 1 {
 			return 64, errors.New("usage: mysafeai check")
@@ -176,7 +188,7 @@ func run(ctx context.Context, args []string) (int, error) {
 		if err != nil {
 			return 1, err
 		}
-		return startManaged(ctx, args[2:], c, liveCheck, streams{os.Stdin, os.Stdout, os.Stderr}, func(_ runState, event string) { s.event(event) })
+		return startManaged(ctx, args[2:], c, managedChecks(s), streams{os.Stdin, os.Stdout, os.Stderr}, func(_ runState, event string) { s.event(event) })
 	default:
 		return 64, errors.New("unknown command; see mysafeai --help")
 	}

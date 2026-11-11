@@ -42,6 +42,7 @@ type panel struct {
 	smoke    bool
 	closed   bool
 	workers  sync.WaitGroup
+	monitor  *watchClient
 }
 
 func (p *panel) handler() http.Handler {
@@ -66,6 +67,11 @@ func (p *panel) shutdown() {
 	}
 	p.mu.Unlock()
 	p.workers.Wait()
+	if p.monitor != nil {
+		if err := p.monitor.stop(); err != nil {
+			p.storage.event(err.Error())
+		}
+	}
 }
 
 func respond(w http.ResponseWriter, value any) {
@@ -90,6 +96,9 @@ func decode(w http.ResponseWriter, r *http.Request, data any) error {
 }
 
 func (p *panel) serve(w http.ResponseWriter, r *http.Request, path string) {
+	if p.servePolicy(w, r, path) {
+		return
+	}
 	switch r.Method + " " + path {
 	case "GET ", "GET style.css", "GET panel.js", "GET icon.svg":
 		name := path
@@ -131,9 +140,16 @@ func (p *panel) serve(w http.ResponseWriter, r *http.Request, path string) {
 		trayOnly := p.trayOnly
 		p.mu.Unlock()
 		tray := p.tray()
+		var watch watchStatus
+		if p.monitor != nil {
+			watch = p.monitor.snapshot()
+		}
+		login, _ := loginLaunchEnabled()
 		respond(w, map[string]any{
 			"config": c, "adapters": names, "journal": p.storage.recent(), "running": running,
 			"token": p.token, "smoke": p.smoke, "trayOnly": trayOnly && tray, "trayAvailable": tray, "canPick": p.pick != nil,
+			"watch": watch, "targets": append(append([]appTarget(nil), builtInTargets...), c.CustomTargets...),
+			"login": login, "sources": sourceNames(),
 		})
 	case "POST api/window-mode":
 		var preferences windowPreferences
@@ -166,30 +182,6 @@ func (p *panel) serve(w http.ResponseWriter, r *http.Request, path string) {
 		}
 		respond(w, struct{}{})
 		p.hide()
-	case "POST api/policy":
-		var c config
-		if err := decode(w, r, &c); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		p.mu.Lock()
-		defer p.mu.Unlock()
-		if len(p.running) != 0 {
-			http.Error(w, "stop the programs launched from this panel before changing the rule", http.StatusConflict)
-			return
-		}
-		if err := p.storage.save(c); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		respond(w, c)
-	case "POST api/check":
-		var c config
-		if err := decode(w, r, &c); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		respond(w, verify(r.Context(), c))
 	case "POST api/pick":
 		if p.pick == nil {
 			http.Error(w, "file selection is unavailable", http.StatusServiceUnavailable)
@@ -233,7 +225,7 @@ func (p *panel) serve(w http.ResponseWriter, r *http.Request, path string) {
 				delete(p.running, id)
 				p.mu.Unlock()
 			}()
-			code, err := startManaged(ctx, append([]string{strings.TrimSpace(request.Command)}, request.Args...), c, liveCheck, streams{}, func(state runState, event string) {
+			code, err := startManaged(ctx, append([]string{strings.TrimSpace(request.Command)}, request.Args...), c, managedChecks(p.storage), streams{}, func(state runState, event string) {
 				p.storage.event(event)
 				p.mu.Lock()
 				item := p.running[id]

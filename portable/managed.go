@@ -37,9 +37,31 @@ type streams struct {
 type routeCheck struct {
 	verify func(context.Context, config) report
 	routes func(context.Context, string) (bool, error)
+	load   func() (config, error)
+	path   func(context.Context, config) (connectionPath, error)
 }
 
-var liveCheck = routeCheck{verify, routes}
+func managedChecks(s storage) routeCheck {
+	return routeCheck{load: s.load}
+}
+
+func (checks routeCheck) scoped(target string) routeCheck {
+	checks.verify = func(ctx context.Context, c config) report { return verifyTarget(ctx, c, target) }
+	checks.path = func(ctx context.Context, c config) (connectionPath, error) {
+		effective, rule := c.forTarget(target)
+		return findConnectionPath(ctx, effective, rule.Mode, target)
+	}
+	return checks
+}
+
+func (checks routeCheck) samePath(ctx context.Context, c config, proof report) (bool, string) {
+	if checks.path != nil {
+		path, err := checks.path(ctx, c)
+		return err == nil && path.key == proof.routeKey, path.key
+	}
+	ipv6, err := checks.routes(ctx, c.Adapter)
+	return err == nil && ipv6 == proof.IPv6, fmt.Sprint(err == nil, ipv6)
+}
 
 func secret() string {
 	var token [24]byte
@@ -81,6 +103,26 @@ func startManaged(ctx context.Context, args []string, c config, checks routeChec
 	if err != nil {
 		return 126, err
 	}
+	if checks.load != nil {
+		var err error
+		if c, err = checks.load(); err != nil {
+			return 69, err
+		}
+		id := "managed"
+		for _, app := range c.CustomTargets {
+			if matchesExecutable(app.Executable, target[0]) {
+				id = app.ID
+				break
+			}
+		}
+		if id == "managed" {
+			if preset := presetForProcess(appProcess{Executable: target[0], Arguments: target}); preset != "" {
+				id = preset
+			}
+		}
+		checks = checks.scoped(id)
+	}
+	policyKey := policyFingerprint(c)
 	proof := checks.verify(ctx, c)
 	if !proof.Trusted {
 		return 69, errors.New(proof.Reason)
@@ -142,9 +184,9 @@ func startManaged(ctx context.Context, args []string, c config, checks routeChec
 		return 70, errors.New("invalid local launch handshake")
 	}
 	checkCtx, cancel := context.WithTimeout(ctx, time.Second)
-	ipv6, err := checks.routes(checkCtx, c.Adapter)
+	samePath, previousPath := checks.samePath(checkCtx, c, proof)
 	cancel()
-	if err != nil || ipv6 != proof.IPv6 {
+	if !samePath {
 		return 69, errors.New("the route changed before launch")
 	}
 	if _, err := gate.Write([]byte{1}); err != nil {
@@ -162,13 +204,17 @@ func startManaged(ctx context.Context, args []string, c config, checks routeChec
 	defer proofTick.Stop()
 	recheckCtx, stopChecks := context.WithCancel(ctx)
 	defer stopChecks()
+	var events <-chan struct{}
+	if checks.load != nil {
+		events = connectionEvents(recheckCtx)
+	}
 	results := make(chan report, 1)
 	checking := false
 	paused := false
 	generation := uint64(0)
 	var proofGeneration uint64
-	routeOK, previousIPv6 := true, proof.IPv6
 	lastVerified := time.Now()
+	var pausedSince, closingAt time.Time
 	for {
 		select {
 		case err := <-exited:
@@ -181,38 +227,72 @@ func startManaged(ctx context.Context, args []string, c config, checks routeChec
 			return 0, err
 		case <-ctx.Done():
 			return 130, nil
-		case <-routeTick.C:
-			checkCtx, cancel := context.WithTimeout(ctx, time.Second)
-			ipv6, err := checks.routes(checkCtx, c.Adapter)
-			cancel()
-			ok := err == nil
-			if ok != routeOK || ipv6 != previousIPv6 {
-				generation++
-				routeOK, previousIPv6 = ok, ipv6
+		case _, open := <-events:
+			if !open {
+				events = nil
+				break
 			}
-			if !ok || ipv6 != proof.IPv6 || time.Since(lastVerified) > 12*time.Second {
-				if !paused {
-					log(runPaused, "paused "+filepath.Base(target[0])+" · route changed")
-				}
-				paused = true
-			}
-			if err := tree.update(paused); err != nil {
+			generation++
+			lastVerified = time.Time{}
+			if err := tree.update(true); err != nil {
 				return 70, fmt.Errorf("process control failed: %w", err)
+			}
+			if !paused {
+				paused, pausedSince = true, time.Now()
+				log(runPaused, "paused "+filepath.Base(target[0])+" · network changed")
+			}
+		case <-routeTick.C:
+			var policyErr error
+			if checks.load != nil {
+				var latest config
+				if latest, policyErr = checks.load(); policyErr == nil {
+					key := policyFingerprint(latest)
+					if key != policyKey {
+						c, policyKey = latest, key
+						generation++
+						lastVerified = time.Time{}
+					}
+				}
+			}
+			checkCtx, cancel := context.WithTimeout(ctx, time.Second)
+			samePath, path := checks.samePath(checkCtx, c, proof)
+			cancel()
+			if path != previousPath {
+				generation++
+				previousPath = path
+			}
+			needsPause := paused || !samePath || policyErr != nil || time.Since(lastVerified) > 12*time.Second
+			if err := tree.update(needsPause); err != nil {
+				return 70, fmt.Errorf("process control failed: %w", err)
+			}
+			if needsPause && !paused {
+				paused, pausedSince = true, time.Now()
+				log(runPaused, "paused "+filepath.Base(target[0])+" · route changed")
+			}
+			if !closingAt.IsZero() && time.Now().After(closingAt) {
+				return 130, errors.New("program closed after VPN timeout")
+			}
+			if paused && c.CloseAfterDelay && closingAt.IsZero() && time.Since(pausedSince) >= 20*time.Second {
+				requestManagedClose(helper.Process.Pid)
+				closingAt = time.Now().Add(5 * time.Second)
 			}
 		case <-proofTick.C:
 			if !checking {
 				checking = true
 				proofGeneration = generation
-				go func() { results <- checks.verify(recheckCtx, c) }()
+				go func(snapshot config) { results <- checks.verify(recheckCtx, snapshot) }(c)
 			}
 		case result := <-results:
 			checking = false
-			trusted := result.Trusted && proofGeneration == generation
+			trusted := result.Trusted && proofGeneration == generation && closingAt.IsZero()
+			if trusted && checks.load != nil {
+				current, err := checks.load()
+				trusted = err == nil && policyFingerprint(current) == policyKey
+			}
 			if trusted {
 				checkCtx, cancel := context.WithTimeout(ctx, time.Second)
-				ipv6, err := checks.routes(checkCtx, c.Adapter)
+				trusted, _ = checks.samePath(checkCtx, c, result)
 				cancel()
-				trusted = err == nil && ipv6 == result.IPv6
 			}
 			if trusted {
 				proof = result
@@ -221,17 +301,31 @@ func startManaged(ctx context.Context, args []string, c config, checks routeChec
 			if !trusted && result.Trusted {
 				result.Reason = "the route changed during verification"
 			}
+			if err := tree.update(!trusted); err != nil {
+				return 70, fmt.Errorf("process control failed: %w", err)
+			}
 			if trusted == paused {
 				paused = !trusted
 				state, action := runRunning, "resumed "
 				if paused {
+					pausedSince = time.Now()
 					state, action = runPaused, "paused "
 				}
 				log(state, action+filepath.Base(target[0])+" · "+result.Reason)
 			}
-			if err := tree.update(paused); err != nil {
-				return 70, fmt.Errorf("process control failed: %w", err)
-			}
+		}
+	}
+}
+
+func requestManagedClose(root int) {
+	backend := nativeProcessBackend()
+	processes, err := backend.list()
+	if err != nil {
+		return
+	}
+	for _, process := range processes {
+		if process.Parent == root {
+			_ = backend.signal(process.Key, appTerminate)
 		}
 	}
 }

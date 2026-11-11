@@ -17,7 +17,7 @@ jobs:
     container: archlinux:base-devel
     steps:
       - name: Install Arch build dependencies
-        run: pacman -Syu --noconfirm --needed git go gtk4 webkitgtk-6.0 iproute2 dbus xorg-server-xvfb xorg-xauth xfce4-panel xfwm4 xdotool imagemagick ttf-dejavu
+        run: pacman -Syu --noconfirm --needed git go gtk4 webkitgtk-6.0 iproute2 glib-networking dbus xorg-server-xvfb xorg-xauth xfce4-panel xfwm4 xdotool imagemagick ttf-dejavu
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -77,13 +77,15 @@ jobs:
           release: "15.1"
           sync: rsync
           copyback: true
-          prepare: pkg install -y go126 pkgconf gtk4 webkit2-gtk_60 xorg-vfbserver dbus xfce4-panel xfce4-wm xdotool
+          prepare: pkg install -y go126 pkgconf gtk4 webkit2-gtk_60 glib-networking xorg-vfbserver dbus xfce4-panel xfce4-wm xdotool
           run: |
             set -eu
             go_bin=$(command -v go126 || command -v go)
             cd portable
             "$go_bin" vet -tags production ./...
-            "$go_bin" test -tags production -v ./...
+            "$go_bin" test -tags production -c -o /tmp/mysafeai-freebsd.test
+            pw useradd builder -m -s /bin/sh
+            su builder -c '/tmp/mysafeai-freebsd.test -test.v'
             mkdir -p ../dist/freebsd
             "$go_bin" build -tags production -trimpath -o ../dist/freebsd/mysafeai .
             ../dist/freebsd/mysafeai --help
@@ -91,7 +93,6 @@ jobs:
             tar -czf ../dist/MySafeAI-FreeBSD-amd64.tar.gz -C ../dist/freebsd mysafeai LICENSE README.md
             install -m 755 ../dist/freebsd/mysafeai /tmp/mysafeai-freebsd
             install -m 755 ../scripts/test-desktop-tray.sh /tmp/mysafeai-tray-check
-            pw useradd builder -m -s /bin/sh
             su builder -c '
               export PATH=/usr/local/bin:/usr/bin:/bin
               Xvfb :99 -screen 0 1024x768x24 -nolisten tcp &

@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -24,6 +25,65 @@ func TestMain(m *testing.M) {
 		}
 	}
 	os.Exit(m.Run())
+}
+
+func TestNativeAppProcessPauseAndIdentity(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("application observation is restricted to regular user sessions")
+	}
+	path, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	progress, stop := filepath.Join(dir, "progress"), filepath.Join(dir, "stop")
+	cmd := exec.Command(path, "_fixture", progress, stop)
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}()
+	size := func() int64 {
+		if info, err := os.Stat(progress); err == nil {
+			return info.Size()
+		}
+		return 0
+	}
+	waitUntil(t, 6*time.Second, func() bool { return size() >= 4 })
+	processes, err := listAppProcesses()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var child appProcess
+	for _, process := range processes {
+		if process.Key.PID == cmd.Process.Pid {
+			child = process
+			break
+		}
+	}
+	if child.Key.Started == 0 || child.Parent != os.Getpid() || child.Executable == "" {
+		t.Fatalf("fixture identity not detected: %+v", child)
+	}
+	stale := child.Key
+	stale.Started++
+	if err := controlAppProcess(stale, appPause); !errors.Is(err, os.ErrProcessDone) {
+		t.Fatalf("stale identity was accepted: %v", err)
+	}
+	if err := controlAppProcess(child.Key, appPause); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	frozen := size()
+	time.Sleep(300 * time.Millisecond)
+	if size() != frozen {
+		t.Fatal("fixture ran while paused")
+	}
+	if err := controlAppProcess(child.Key, appResume); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, 6*time.Second, func() bool { return size() > frozen })
 }
 
 func tickFixture(path, stop string) {

@@ -70,7 +70,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev xvfb xauth dbus-x11
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libwebkitgtk-6.0-dev glib-networking xvfb xauth dbus-x11
       - name: Add Windows application icon and manifest
         if: runner.os == 'Windows'
         run: |

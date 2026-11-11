@@ -36,7 +36,7 @@ func runDesktop(parent context.Context, s storage, smoke bool) error {
 		smoke: smoke, tray: trayAvailable, trayOnly: trayOnly}
 	var ready atomic.Bool
 	var hiddenToTray atomic.Bool
-	hiddenToTray.Store(trayOnly && trayOnStartup)
+	hiddenToTray.Store((trayOnly || startsInBackground(parent)) && trayOnStartup)
 	var app *application.App
 	var window *application.WebviewWindow
 
@@ -138,6 +138,10 @@ func runDesktop(parent context.Context, s storage, smoke bool) error {
 			window.Hide()
 		}
 	})
+
+	if !smoke {
+		ui.monitor = startWatchClient(ctx, s, func() { application.InvokeAsync(show) })
+	}
 
 	if smoke {
 		timeout := time.AfterFunc(25*time.Second, func() {

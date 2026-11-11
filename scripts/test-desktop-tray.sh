@@ -121,8 +121,8 @@ activate_item
 wait_for window_visible
 printf 'Opened, closed to Xfce tray and reopened through StatusNotifierItem.Activate\n'
 
-# Enter Settings through the visible navigation. Reverse Tab order reaches the
-# checkbox before the four navigation buttons, independent of title bar height.
+# The Settings heading receives focus on navigation. Its first control is
+# the tray-only checkbox, independent of the size of the settings form.
 window=$(window_id)
 xdotool windowactivate --sync "$window"
 sleep 1
@@ -131,7 +131,7 @@ width=$(printf '%s\n' "$dimensions" | sed -n 's/^WIDTH=//p')
 height=$(printf '%s\n' "$dimensions" | sed -n 's/^HEIGHT=//p')
 xdotool mousemove --window "$window" "$((width - 59))" "$((height - 28))" click 1
 sleep 0.4
-xdotool key --delay 100 Shift+Tab Shift+Tab Shift+Tab Shift+Tab space
+xdotool key --delay 100 Tab space
 wait_for window_hidden
 grep -q '"trayOnly":true' "$XDG_CONFIG_HOME/MySafeAI/window.json"
 if [ -n "$screenshot" ]; then
