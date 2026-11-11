@@ -63,29 +63,31 @@ func runDesktop(parent context.Context, s storage, smoke bool) error {
 		BackgroundColour: application.NewRGB(20, 21, 27),
 	})
 
-	if !smoke {
-		tray := app.SystemTray.New()
-		tray.SetIcon(icon)
-		tray.SetTooltip("MySafeAI")
-		tray.OnClick(show)
-		menu := app.Menu.New()
-		menu.Add("Открыть MySafeAI").OnClick(func(*application.Context) { show() })
-		menu.AddSeparator()
-		menu.Add("Выйти").OnClick(func(*application.Context) { app.Quit() })
-		tray.SetMenu(menu)
-		window.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
-			if trayAvailable() {
-				event.Cancel()
-				window.Hide()
-			}
+	ui.pick = func() (string, error) {
+		dialog := app.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
+			Title: "Выбрать программу", CanChooseFiles: true, AllowsOtherFileTypes: true, Window: window,
 		})
+		return dialog.PromptForSingleSelection()
 	}
+	tray := app.SystemTray.New()
+	tray.SetIcon(icon)
+	tray.SetTooltip("MySafeAI")
+	tray.OnClick(show)
+	menu := app.Menu.New()
+	menu.Add("Открыть MySafeAI").OnClick(func(*application.Context) { show() })
+	menu.AddSeparator()
+	menu.Add("Выйти").OnClick(func(*application.Context) { app.Quit() })
+	tray.SetMenu(menu)
+	window.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
+		if trayAvailable() {
+			event.Cancel()
+			window.Hide()
+		}
+	})
 
 	if smoke {
 		timeout := time.AfterFunc(25*time.Second, func() {
-			if !ready.Load() {
-				finish(70, errors.New("the native window did not load the embedded panel"))
-			}
+			finish(70, errors.New("the native window did not finish its startup and shutdown check"))
 		})
 		defer timeout.Stop()
 	}

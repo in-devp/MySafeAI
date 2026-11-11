@@ -64,6 +64,10 @@ details { margin-top: 8px; }
 summary { color: #d1d1df; cursor: pointer; font-size: 12px; }
 ul { list-style: none; padding: 0; margin: 6px 0; }
 li { border-top: 1px solid #353640; padding: 5px 0; overflow-wrap: anywhere; }
+.program-picker { display: flex; gap: 6px; }
+.program-picker button { flex-shrink: 0; }
+#running small { display: block; color: #b9bac8; }
+#running small[data-state="paused"] { color: #ffca8c; }
 #running li { display: flex; align-items: center; justify-content: space-between; gap: 9px; }
 #journal { font-size: 12px; color: #cdced7; }
 #notice { color: #ffca8c; overflow-wrap: anywhere; }

@@ -29,7 +29,10 @@
       <section class="card">
         <h2>Запуск под защитой</h2>
         <label for="command">Путь к программе или имя команды</label>
-        <input id="command" placeholder="cursor или C:\Путь\Программа.exe">
+        <div class="program-picker">
+          <input id="command" placeholder="cursor">
+          <button id="pick" class="quiet">Выбрать…</button>
+        </div>
         <details>
           <summary>Аргументы запуска</summary>
           <label for="args">По одному аргументу на строку</label>

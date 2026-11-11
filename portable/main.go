@@ -159,7 +159,7 @@ func run(ctx context.Context, args []string) (int, error) {
 		if err != nil {
 			return 1, err
 		}
-		return startManaged(ctx, args[2:], c, liveCheck, streams{os.Stdin, os.Stdout, os.Stderr}, s.event)
+		return startManaged(ctx, args[2:], c, liveCheck, streams{os.Stdin, os.Stdout, os.Stderr}, func(_ runState, event string) { s.event(event) })
 	default:
 		return 64, errors.New("unknown command; see mysafeai --help")
 	}

@@ -7,7 +7,7 @@
 ## Windows и Linux
 
 - **Windows.** Распакуйте ZIP и откройте `MySafeAI-Desktop.exe`. Для команд в терминале используйте `mysafeai.exe`. Требуются Windows 10 или новее и Microsoft WebView2 Runtime.
-- **Linux.** Установите `.deb` на Ubuntu 24.04 или совместимой системе и откройте MySafeAI из меню приложений. Из `.tar.gz` можно запустить `./mysafeai`; нужны ядро 5.3+, `iproute2`, GTK4 и WebKitGTK 6.0. Значок в трее появляется в окружениях с поддержкой StatusNotifierItem.
+- **Linux.** Установите `.deb` на Ubuntu 26.04 или совместимой системе и откройте MySafeAI из меню приложений. Из `.tar.gz` можно запустить `./mysafeai`. Приложению нужны `iproute2`, GTK4 и WebKitGTK 6.0 с поддержкой песочницы. Значок в трее появляется в окружениях с поддержкой StatusNotifierItem.
 
 Настройки и журнал хранятся в `%APPDATA%\MySafeAI` или `${XDG_CONFIG_HOME:-~/.config}/MySafeAI`.
 

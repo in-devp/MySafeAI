@@ -73,7 +73,7 @@ func TestManagedCommandRuntime(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 22*time.Second)
 	defer cancel()
 	c := config{Adapter: "fixture"}
-	if code, err := startManaged(ctx, command, c, checks, streams{}, func(string) {}); code != 69 || err == nil {
+	if code, err := startManaged(ctx, command, c, checks, streams{}, func(runState, string) {}); code != 69 || err == nil {
 		t.Fatalf("untrusted launch: %d, %v", code, err)
 	}
 	if _, err := os.Stat(progress); !errors.Is(err, os.ErrNotExist) {
@@ -84,7 +84,7 @@ func TestManagedCommandRuntime(t *testing.T) {
 	result := make(chan int, 1)
 	logs := make(chan string, 24)
 	go func() {
-		code, err := startManaged(ctx, command, c, checks, streams{err: os.Stderr}, func(line string) { logs <- line })
+		code, err := startManaged(ctx, command, c, checks, streams{err: os.Stderr}, func(_ runState, line string) { logs <- line })
 		if err != nil {
 			t.Log(err)
 		}

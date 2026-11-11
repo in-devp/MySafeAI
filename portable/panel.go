@@ -19,7 +19,8 @@ import (
 var web embed.FS
 
 type session struct {
-	name   string
+	Name   string   `json:"name"`
+	State  runState `json:"state"`
 	cancel context.CancelFunc
 }
 
@@ -27,6 +28,7 @@ type panel struct {
 	storage storage
 	ctx     context.Context
 	stop    context.CancelFunc
+	pick    func() (string, error)
 	mu      sync.Mutex
 	running map[string]session
 	token   string
@@ -92,7 +94,13 @@ func (p *panel) serve(w http.ResponseWriter, r *http.Request, path string) {
 			http.NotFound(w, r)
 			return
 		}
-		w.Header().Set("Content-Type", mime.TypeByExtension(name[strings.LastIndexByte(name, '.'):]))
+		contentTypes := map[string]string{
+			"index.html": "text/html; charset=utf-8",
+			"panel.js":   "text/javascript; charset=utf-8",
+			"style.css":  "text/css; charset=utf-8",
+			"icon.svg":   "image/svg+xml",
+		}
+		w.Header().Set("Content-Type", contentTypes[name])
 		_, _ = w.Write(data)
 	case "GET api/state":
 		c, err := p.storage.load()
@@ -109,9 +117,9 @@ func (p *panel) serve(w http.ResponseWriter, r *http.Request, path string) {
 		}
 		sort.Strings(names)
 		p.mu.Lock()
-		running := make(map[string]string, len(p.running))
-		for id, session := range p.running {
-			running[id] = session.name
+		running := make(map[string]session, len(p.running))
+		for id, item := range p.running {
+			running[id] = item
 		}
 		p.mu.Unlock()
 		respond(w, map[string]any{"config": c, "adapters": names, "journal": p.storage.recent(), "running": running, "token": p.token, "smoke": p.smoke})
@@ -139,6 +147,17 @@ func (p *panel) serve(w http.ResponseWriter, r *http.Request, path string) {
 			return
 		}
 		respond(w, verify(r.Context(), c))
+	case "POST api/pick":
+		if p.pick == nil {
+			http.Error(w, "file selection is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		path, err := p.pick()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		respond(w, map[string]string{"path": path})
 	case "POST api/start":
 		var request struct {
 			Command string   `json:"command"`
@@ -161,7 +180,7 @@ func (p *panel) serve(w http.ResponseWriter, r *http.Request, path string) {
 		}
 		id := secret()
 		ctx, cancel := context.WithCancel(p.ctx)
-		p.running[id] = session{strings.TrimSpace(request.Command), cancel}
+		p.running[id] = session{Name: strings.TrimSpace(request.Command), State: runChecking, cancel: cancel}
 		p.workers.Add(1)
 		go func() {
 			defer p.workers.Done()
@@ -171,7 +190,14 @@ func (p *panel) serve(w http.ResponseWriter, r *http.Request, path string) {
 				delete(p.running, id)
 				p.mu.Unlock()
 			}()
-			code, err := startManaged(ctx, append([]string{strings.TrimSpace(request.Command)}, request.Args...), c, liveCheck, streams{}, p.storage.event)
+			code, err := startManaged(ctx, append([]string{strings.TrimSpace(request.Command)}, request.Args...), c, liveCheck, streams{}, func(state runState, event string) {
+				p.storage.event(event)
+				p.mu.Lock()
+				item := p.running[id]
+				item.State = state
+				p.running[id] = item
+				p.mu.Unlock()
+			})
 			if err != nil {
 				p.storage.event("launch error · " + err.Error())
 			} else if code != 0 {

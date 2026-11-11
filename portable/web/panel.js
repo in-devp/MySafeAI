@@ -44,7 +44,7 @@ function list(node, lines) {
 }
 
 function display(result) {
-  get("status").textContent = result.trusted ? "Маршрут подтверждён" : "Маршрут не разрешён";
+  get("status").textContent = result.trusted ? "Последняя проверка · маршрут подтверждён" : "Последняя проверка · маршрут не разрешён";
   get("status").dataset.state = result.trusted ? "trusted" : "denied";
   get("ip").textContent = (result.ips || []).join(" · ");
   get("route-note").textContent = result.reason;
@@ -71,12 +71,15 @@ async function refresh(first = false) {
   get("journal-empty").hidden = entries.length !== 0;
   list(get("journal"), entries);
   const sessions = Object.entries(state.running);
-  if (sessions.length !== running.size || sessions.some(([id, name]) => running.get(id) !== name)) {
+  if (sessions.length !== running.size || sessions.some(([id, session]) => running.get(id)?.name !== session.name || running.get(id)?.state !== session.state)) {
     running.clear();
-    for (const [id, name] of sessions) running.set(id, name);
+    for (const [id, session] of sessions) running.set(id, session);
     showRunning();
   }
-  if (state.smoke) await request("exit", {});
+  if (state.smoke) {
+    await request("policy", { adapter: "smoke", allowed: ["203.0.113.10"] });
+    await request("exit", {});
+  }
 }
 
 function action(id, run) {
@@ -94,10 +97,15 @@ function action(id, run) {
 }
 
 function showRunning() {
-  get("running").replaceChildren(...[...running].map(([id, name]) => {
+  const labels = { checking: "Проверяем маршрут", running: "Работает", paused: "На паузе", exited: "Завершено" };
+  get("running").replaceChildren(...[...running].map(([id, session]) => {
     const item = document.createElement("li");
     const label = document.createElement("span");
-    label.textContent = name;
+    label.textContent = session.name;
+    const status = document.createElement("small");
+    status.textContent = labels[session.state];
+    status.dataset.state = session.state;
+    label.append(status);
     const button = document.createElement("button");
     button.className = "quiet";
     button.textContent = "Остановить";
@@ -145,11 +153,15 @@ action("save", async () => {
   await request("policy", policy());
   get("notice").textContent = "Правило сохранено.";
 });
+action("pick", async () => {
+  const { path } = await request("pick", {});
+  if (path) get("command").value = path;
+});
 action("launch", async () => {
   const command = get("command").value.trim();
   const args = get("args").value.split("\n").filter(Boolean);
   const { id } = await request("start", { command, args });
-  running.set(id, command);
+  running.set(id, { name: command, state: "checking" });
   showRunning();
   get("notice").textContent = "Проверяем маршрут перед запуском.";
 });

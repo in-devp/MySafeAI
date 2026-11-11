@@ -16,6 +16,15 @@ import (
 	"time"
 )
 
+type runState string
+
+const (
+	runChecking runState = "checking"
+	runRunning  runState = "running"
+	runPaused   runState = "paused"
+	runExited   runState = "exited"
+)
+
 type processTree interface {
 	update(paused bool) error
 	close()
@@ -67,7 +76,7 @@ func executable(args []string) ([]string, error) {
 	return append([]string{path}, args[1:]...), nil
 }
 
-func startManaged(ctx context.Context, args []string, c config, checks routeCheck, stdio streams, log func(string)) (int, error) {
+func startManaged(ctx context.Context, args []string, c config, checks routeCheck, stdio streams, log func(runState, string)) (int, error) {
 	target, err := executable(args)
 	if err != nil {
 		return 126, err
@@ -142,7 +151,7 @@ func startManaged(ctx context.Context, args []string, c config, checks routeChec
 		return 70, err
 	}
 	_ = gate.SetDeadline(time.Time{})
-	log("started " + filepath.Base(target[0]))
+	log(runRunning, "started "+filepath.Base(target[0]))
 
 	routeTick := time.NewTicker(500 * time.Millisecond)
 	proofTick := time.NewTicker(5 * time.Second)
@@ -161,7 +170,7 @@ func startManaged(ctx context.Context, args []string, c config, checks routeChec
 		select {
 		case err := <-exited:
 			finished = true
-			log("exited " + filepath.Base(target[0]))
+			log(runExited, "exited "+filepath.Base(target[0]))
 			var exit *exec.ExitError
 			if errors.As(err, &exit) {
 				return exit.ExitCode(), nil
@@ -180,7 +189,7 @@ func startManaged(ctx context.Context, args []string, c config, checks routeChec
 			}
 			if !ok || ipv6 != proof.IPv6 || time.Since(lastVerified) > 12*time.Second {
 				if !paused {
-					log("paused " + filepath.Base(target[0]) + " · route changed")
+					log(runPaused, "paused "+filepath.Base(target[0])+" · route changed")
 				}
 				paused = true
 			}
@@ -211,11 +220,11 @@ func startManaged(ctx context.Context, args []string, c config, checks routeChec
 			}
 			if trusted == paused {
 				paused = !trusted
-				action := "resumed "
+				state, action := runRunning, "resumed "
 				if paused {
-					action = "paused "
+					state, action = runPaused, "paused "
 				}
-				log(action + filepath.Base(target[0]) + " · " + result.Reason)
+				log(state, action+filepath.Base(target[0])+" · "+result.Reason)
 			}
 			if err := tree.update(paused); err != nil {
 				return 70, fmt.Errorf("process control failed: %w", err)

@@ -47,8 +47,8 @@ jobs:
         include:
           - {runner: windows-2025, platform: Windows, arch: x64, bin: mysafeai.exe}
           - {runner: windows-11-arm, platform: Windows, arch: arm64, bin: mysafeai.exe}
-          - {runner: ubuntu-24.04, platform: Linux, arch: x64, bin: mysafeai}
-          - {runner: ubuntu-24.04-arm, platform: Linux, arch: arm64, bin: mysafeai}
+          - {runner: ubuntu-26.04, platform: Linux, arch: x64, bin: mysafeai}
+          - {runner: ubuntu-26.04-arm, platform: Linux, arch: arm64, bin: mysafeai}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     defaults:
@@ -87,12 +87,16 @@ jobs:
       - name: Open and verify the Linux desktop window
         if: runner.os == 'Linux'
         run: xvfb-run -a dbus-run-session -- ../dist/package/mysafeai _smoke-ui
-      - name: Open and verify the Windows desktop window
-        if: runner.os == 'Windows'
-        run: ../dist/package/mysafeai.exe _smoke-ui
       - name: Build the Windows desktop launcher
         if: runner.os == 'Windows'
         run: go build -tags production -trimpath -ldflags="-H windowsgui" -o ../dist/package/MySafeAI-Desktop.exe .
+      - name: Open and verify the Windows desktop launcher
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $launcher = Resolve-Path ../dist/package/MySafeAI-Desktop.exe
+          $process = Start-Process -FilePath $launcher -ArgumentList _smoke-ui -Wait -PassThru
+          if ($process.ExitCode -ne 0) { exit $process.ExitCode }
       - name: Archive Linux binary
         if: runner.os == 'Linux'
         run: tar -czf "../dist/MySafeAI-Linux-${{ matrix.arch }}.tar.gz" -C ../dist/package mysafeai LICENSE README.md
