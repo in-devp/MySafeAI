@@ -11,6 +11,9 @@ cleanup() {
     status=$?
     if [ "$status" -ne 0 ]; then
         cat "$test_dir/app.log" "$test_dir/panel.log" "$test_dir/wm.log" 2>/dev/null || :
+        if [ -n "$screenshot" ] && window_visible; then
+            import -window "$(window_id)" "$screenshot" || :
+        fi
     fi
     for pid in "$app_pid" "$panel_pid" "$wm_pid"; do
         if [ -n "$pid" ]; then kill "$pid" 2>/dev/null || :; fi
@@ -117,11 +120,22 @@ printf 'Opened, closed to Xfce tray and reopened through StatusNotifierItem.Acti
 # Enter Settings through the visible navigation. Reverse Tab order reaches the
 # checkbox before the four navigation buttons, independent of title bar height.
 window=$(window_id)
+xdotool windowactivate --sync "$window"
+sleep 1
 dimensions=$(xdotool getwindowgeometry --shell "$window")
 width=$(printf '%s\n' "$dimensions" | sed -n 's/^WIDTH=//p')
 height=$(printf '%s\n' "$dimensions" | sed -n 's/^HEIGHT=//p')
 xdotool mousemove --window "$window" "$((width - 59))" "$((height - 28))" click 1
+sleep 0.4
 xdotool key --delay 100 Shift+Tab Shift+Tab Shift+Tab Shift+Tab space
+if [ "$(uname -s)" = Linux ] && window_visible; then
+    # GTK's client-side decorations shift the contents below the native title.
+    for y in 123 135 147 159 171; do
+        xdotool mousemove --window "$window" 62 "$y" click 1
+        sleep 0.2
+        if window_hidden; then break; fi
+    done
+fi
 wait_for window_hidden
 grep -q '"trayOnly":true' "$XDG_CONFIG_HOME/MySafeAI/window.json"
 kill -INT "$app_pid"

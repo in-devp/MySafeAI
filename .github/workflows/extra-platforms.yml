@@ -43,9 +43,14 @@ jobs:
           WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS: "1"
         run: |
           install -m 755 scripts/test-desktop-tray.sh /tmp/mysafeai-tray-check
-          runuser -u builder -- xvfb-run -a dbus-run-session -- /tmp/mysafeai-tray-check /usr/bin/mysafeai /tmp/mysafeai-arch.png
-          install -m 644 /tmp/mysafeai-arch.png dist/mysafeai-arch.png
+          status=0
+          runuser -u builder -- xvfb-run -a dbus-run-session -- /tmp/mysafeai-tray-check /usr/bin/mysafeai /tmp/mysafeai-arch.png || status=$?
+          if [ -f /tmp/mysafeai-arch.png ]; then
+            install -m 644 /tmp/mysafeai-arch.png dist/mysafeai-arch.png
+          fi
+          exit "$status"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() && hashFiles('dist/mysafeai-arch.png') != '' }}
         with:
           path: dist/mysafeai-arch.png
           archive: false

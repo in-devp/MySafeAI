@@ -12,6 +12,8 @@ final class MySafeAIApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     private var offeredAddresses: [String] = []
     private var approvalPanel: NSPanel?
     private var desktopWindow: NSWindow?
+    private let applicationIcon = Bundle.main.url(forResource: "AppIcon", withExtension: "icns")
+        .flatMap { NSImage(contentsOf: $0) } ?? BrandMark.badge
     private let restoring: Bool
     private let smokeWindow: Bool
     private var trayOnly: Bool
@@ -80,6 +82,13 @@ final class MySafeAIApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
             showDesktopWindow()
             Task { @MainActor in
                 guard self.desktopWindow?.isVisible == true, NSApp.activationPolicy() == .regular else { exit(1) }
+                guard let expected = self.iconCenter(self.applicationIcon),
+                      let installed = self.iconCenter(NSApp.applicationIconImage),
+                      abs(installed.blueComponent - expected.blueComponent) < 0.06,
+                      abs(installed.redComponent - expected.redComponent) < 0.06 else {
+                    print("The Dock did not load the MySafeAI icon")
+                    exit(1)
+                }
                 self.setTrayOnly(true)
                 guard self.desktopWindow?.isVisible == false, NSApp.activationPolicy() == .accessory else { exit(1) }
                 self.openDesktopMode()
@@ -230,6 +239,7 @@ final class MySafeAIApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
 
     private func showDesktopWindow() {
         NSApp.setActivationPolicy(.regular)
+        NSApp.applicationIconImage = applicationIcon
         let window: NSWindow
         if let desktopWindow {
             window = desktopWindow
@@ -260,6 +270,12 @@ final class MySafeAIApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     private func hideDesktopWindow() {
         desktopWindow?.orderOut(nil)
         updatePanelVisibility()
+    }
+
+    private func iconCenter(_ icon: NSImage?) -> NSColor? {
+        guard let image = icon?.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        return NSBitmapImageRep(cgImage: image)
+            .colorAt(x: image.width / 2, y: image.height / 2)?.usingColorSpace(.sRGB)
     }
 
     private func dashboard(inWindow: Bool = false) -> Dashboard {
