@@ -51,8 +51,8 @@ struct LeakCheckView: View {
                 }
                 .panelGroup()
 
-                if case .observed(let observation, _) = report.dns, !observation.answeringResolvers.isEmpty {
-                    resolverList(observation.answeringResolvers)
+                if case .observed(let resolvers) = report.dns {
+                    resolverList(resolvers)
                 }
 
                 DisclosureGroup("Ответы HTTPS-источников") {
@@ -75,7 +75,7 @@ struct LeakCheckView: View {
             }
 
             Text(model.observesDNSExternally
-                 ? "IP проверяют выбранные HTTPS-источники. DNS-тест использует dnsleak.dev: сервис видит IP устройства и резолверов. Отключается в настройках."
+                 ? "IP проверяют выбранные HTTPS-источники. При внешнем DNS-тесте bash.ws видит IP устройства и резолверов."
                  : "Маршруты к DNS-серверам проверяются локально. Для проверки внешнего IP используются выбранные HTTPS-источники.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)

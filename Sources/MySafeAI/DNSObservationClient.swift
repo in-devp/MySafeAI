@@ -5,29 +5,24 @@ import dnssd
 enum DNSObservationClient {
     static func check() async -> DNSObservation {
         do {
-            let startURL = URL(string: "https://dnsleak.dev/api/new")!
-            let data = try await AddressClient.readJSON(startURL)
-            let session = try JSONDecoder().decode(DNSObserverSession.self, from: data)
-            guard session.isValid else { return .unavailable }
+            let token = try await AddressClient.readText(DNSObserverSession.startURL, limit: 128)
+            guard let session = DNSObserverSession(response: token) else { return .unavailable }
             try Task.checkCancellation()
             await withTaskGroup(of: Void.self) { group in
-                for hostname in session.hostnames {
+                for (index, hostname) in session.hostnames.enumerated() {
                     group.addTask {
-                        async let native = SystemDNSLookup.resolve(
-                            hostname, ipv6: hostname.hasPrefix(session.testId.lowercased() + "-q")
-                        )
+                        async let native = SystemDNSLookup.resolve(hostname, ipv6: index % 2 == 1)
                         async let connection = AddressClient.triggerDNSLookup(hostname)
                         _ = await (native, connection)
                     }
                 }
             }
-            let resultURL = URL(string: "https://dnsleak.dev/api/result/\(session.testId)")!
-            for attempt in 0..<3 {
+            for _ in 0..<3 {
                 try await Task.sleep(for: .seconds(1))
-                let result = try await AddressClient.readJSON(resultURL)
-                let report = try JSONDecoder().decode(DNSObserverReport.self, from: result)
-                if report.lookups >= session.hostnames.count || attempt == 2 {
-                    return .observed(report, expected: session.hostnames.count)
+                if let data = try? await AddressClient.readJSON(session.resultURL, timeout: 4),
+                   let report = try? JSONDecoder().decode(DNSObserverReport.self, from: data),
+                   !report.answeringResolvers.isEmpty {
+                    return .observed(report.answeringResolvers)
                 }
             }
         } catch {

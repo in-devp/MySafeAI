@@ -44,37 +44,49 @@ private func checks(_ ip: String, proxy: Bool = false) -> [AddressCheckResult] {
     #expect(report.findings.first(where: { $0.id == "ipv6" })?.level == .warning)
 }
 
-@Test func rejectsDNSObserverHostnamesOutsideTheFixedTestZone() throws {
-    let decoder = JSONDecoder()
-    let valid = try decoder.decode(DNSObserverSession.self, from: Data(
-        #"{"testId":"abc123","hostnames":["abc123-a01.t.dnsleak.dev","abc123-q01.t.dnsleak.dev"]}"#.utf8
-    ))
-    #expect(valid.isValid)
-    let invalid = try decoder.decode(DNSObserverSession.self, from: Data(
-        #"{"testId":"abc123","hostnames":["abc123-a01.t.dnsleak.dev.evil.example","router.internal"]}"#.utf8
-    ))
-    #expect(!invalid.isValid)
-    let traversal = try decoder.decode(DNSObserverSession.self, from: Data(
-        #"{"testId":"../../local","hostnames":["abc-a01.t.dnsleak.dev","abc-q01.t.dnsleak.dev"]}"#.utf8
-    ))
-    #expect(!traversal.isValid)
+@Test func restrictsBashWSSessionIDsToTheFixedTestZone() throws {
+    let valid = try #require(DNSObserverSession(response: "0123456789abcdef\n"))
+    #expect(valid.hostnames.count == 6)
+    #expect(valid.hostnames.first == "1.0123456789abcdef.bash.ws")
+    #expect(valid.resultURL.absoluteString == "https://bash.ws/dnsleak/test/0123456789abcdef?json=2")
+    for response in ["", "example.org", "../../local", "bad/id", "abc?json=3", "a\nb", "проба",
+                     String(repeating: "a", count: 64)] {
+        #expect(DNSObserverSession(response: response) == nil)
+    }
 }
 
-@Test func preservesIncompleteDNSAndUnknownRemoteVerdicts() throws {
+@Test func decodesBashWSResolversWithoutTrustingTheRemoteVerdict() throws {
+    let payload = """
+    [
+      {"type":"ip","ip":"192.0.2.1","org":"Client ISP"},
+      {"type":"dns","ip":"2001:0db8::53","org":"Test DNS","asn":"AS64500","country":"NL","country_name":"Netherlands"},
+      {"type":"dns","ip":"2001:db8::53","asn":"AS64500"},
+      {"type":"dns","ip":"192.0.2.53","org":"","asn":"AS64501"},
+      {"type":"dns","ip":"unknown"},
+      {"type":"conclusion","text":"No DNS leak detected"}
+    ]
+    """
+    let observation = try JSONDecoder().decode(DNSObserverReport.self, from: Data(payload.utf8))
+    #expect(observation.answeringResolvers.map(\.ip) == ["2001:db8::53", "192.0.2.53"])
+    #expect(observation.answeringResolvers.map(\.label) == ["Test DNS", "AS64501"])
+    #expect(observation.answeringResolvers.first?.country == "Netherlands")
+
     let snapshot = NetworkSnapshot(ipv4: .tunnel("utun4"), ipv6: .missing,
-                                   dns: .unavailable, dnsRoute: .viaTunnel)
-    for (lookups, verdict) in [(1, "no_leak"), (12, "inconclusive"), (12, "future-status")] {
-        let payload = """
-        {"lookups":\(lookups),"resolvers":[
-            {"ip":"192.0.2.53","role":"resolver","operator":"Test DNS"},
-            {"ip":"192.0.2.54","role":"observer","operator":"Observer"}
-        ],"verdict":{"status":"\(verdict)"}}
-        """
-        let observation = try JSONDecoder().decode(DNSObserverReport.self, from: Data(payload.utf8))
-        #expect(observation.answeringResolvers.map(\.ip) == ["192.0.2.53"])
-        let report = LeakCheckReport(snapshot: snapshot, proxy: .init(modes: []),
-                                     direct: checks("203.0.113.2"), system: checks("203.0.113.2"),
-                                     ipv6: [], dns: .observed(observation, expected: 12))
-        #expect(report.findings.first(where: { $0.id == "dnsObserver" })?.level == .unknown)
+                                   dns: .unavailable, dnsRoute: .outsideTunnel)
+    let report = LeakCheckReport(snapshot: snapshot, proxy: .init(modes: []),
+                                 direct: checks("203.0.113.2"), system: checks("203.0.113.2"),
+                                 ipv6: [], dns: .observed(observation.answeringResolvers))
+    #expect(report.findings.first(where: { $0.id == "dnsObserver" })?.level == .info)
+    #expect(report.findings.first(where: { $0.id == "dnsRoute" })?.level == .warning)
+}
+
+@Test func treatsBashWSErrorsAndMissingResolversAsUnconfirmed() throws {
+    for payload in [
+        #"[{"type":"error","text":"Test ID not found"}]"#,
+        #"[{"type":"ip","ip":"192.0.2.1"},{"type":"conclusion","text":"No DNS leak detected"}]"#,
+        #"[{"type":"dns","ip":"192.0.2.53"},{"type":"error","text":"Test is incomplete"}]"#
+    ] {
+        let report = try JSONDecoder().decode(DNSObserverReport.self, from: Data(payload.utf8))
+        #expect(report.answeringResolvers.isEmpty)
     }
 }

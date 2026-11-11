@@ -92,8 +92,14 @@ final class AddressClient: NSObject, URLSessionTaskDelegate, @unchecked Sendable
         return (address, delegate.metricLock.withLock { delegate.usedProxy })
     }
 
-    static func readJSON(_ url: URL) async throws -> Data {
-        try await AddressClient().read(url, direct: true, limit: 65_536, accept: "application/json")
+    static func readJSON(_ url: URL, timeout: TimeInterval = 8) async throws -> Data {
+        try await AddressClient().read(url, direct: true, limit: 65_536, accept: "application/json", timeout: timeout)
+    }
+
+    static func readText(_ url: URL, limit: Int) async throws -> String {
+        let data = try await AddressClient().read(url, direct: true, limit: limit)
+        guard let text = String(data: data, encoding: .utf8) else { throw InvalidResponse() }
+        return text
     }
 
     static func servicePath(_ host: String, systemProxy: Bool) async -> ServicePath {

@@ -40,58 +40,77 @@ public struct LeakFinding: Identifiable, Sendable {
     public let level: Level
 }
 
-public struct DNSObserverSession: Decodable, Sendable {
-    public let testId: String
-    public let hostnames: [String]
+public struct DNSObserverSession: Sendable {
+    private static let service = URL(string: "https://bash.ws")!
+    public static let startURL = service.appending(path: "id")
+    private let testID: String
 
-    public var isValid: Bool {
-        guard !testId.isEmpty, testId.count <= 80,
-              testId.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "-") }),
-              (2...12).contains(hostnames.count), Set(hostnames).count == hostnames.count else { return false }
-        return hostnames.allSatisfy {
-            let suffix = String($0.dropFirst(testId.count + 1))
-            return $0.hasPrefix(testId.lowercased() + "-") &&
-                suffix.range(of: #"^[aq][0-9]{2}\.t\.dnsleak\.dev$"#, options: .regularExpression) != nil
-        } && hostnames.contains(where: { $0.hasPrefix(testId.lowercased() + "-a") })
-          && hostnames.contains(where: { $0.hasPrefix(testId.lowercased() + "-q") })
+    public init?(response: String) {
+        let token = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (1...63).contains(token.utf8.count),
+              token.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return nil }
+        testID = token
+    }
+
+    public var hostnames: [String] {
+        (1...6).map { "\($0).\(testID).bash.ws" }
+    }
+
+    public var resultURL: URL {
+        Self.service.appending(path: "dnsleak/test/\(testID)").appending(queryItems: [.init(name: "json", value: "2")])
     }
 }
 
-public struct ObservedDNSResolver: Decodable, Identifiable, Sendable {
+public struct ObservedDNSResolver: Identifiable, Sendable {
     public let ip: String
     public let country: String?
-    public let operatorName: String?
-    public let org: String?
-    public let role: String?
-    public let ecs: String?
+    public let label: String
     public var id: String { ip }
-    public var label: String { String((operatorName ?? org ?? ip).prefix(90)) }
-
-    enum CodingKeys: String, CodingKey {
-        case ip, country, org, role, ecs
-        case operatorName = "operator"
-    }
 }
 
 public struct DNSObserverReport: Decodable, Sendable {
-    public struct Verdict: Decodable, Sendable { public let status: String }
-    public let lookups: Int
-    public let resolvers: [ObservedDNSResolver]
-    public let verdict: Verdict
-    public let truncated: Bool?
+    private struct Row: Decodable {
+        let type: String
+        let ip: String?
+        let org: String?
+        let asn: String?
+        let country: String?
+        let countryName: String?
 
-    public var answeringResolvers: [ObservedDNSResolver] {
-        var seen: Set<String> = []
-        return resolvers.filter {
-            $0.role == "resolver" && AddressEcho.parse($0.ip) != nil && seen.insert($0.ip).inserted
+        enum CodingKeys: String, CodingKey {
+            case type, ip, org, asn, country
+            case countryName = "country_name"
         }
+    }
+
+    public let answeringResolvers: [ObservedDNSResolver]
+
+    public init(from decoder: any Decoder) throws {
+        let rows = try decoder.singleValueContainer().decode([Row].self)
+        guard !rows.contains(where: { $0.type == "error" }) else {
+            answeringResolvers = []
+            return
+        }
+        var seen: Set<String> = []
+        answeringResolvers = rows.compactMap { row in
+            guard row.type == "dns", let ip = row.ip.flatMap(AddressEcho.parse),
+                  seen.insert(ip).inserted else { return nil }
+            let name = Self.nonEmpty(row.org) ?? Self.nonEmpty(row.asn) ?? ip
+            return .init(ip: ip, country: Self.nonEmpty(row.countryName) ?? Self.nonEmpty(row.country),
+                         label: String(name.prefix(90)))
+        }
+    }
+
+    private static func nonEmpty(_ text: String?) -> String? {
+        guard let value = text?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty else { return nil }
+        return value
     }
 }
 
 public enum DNSObservation: Sendable {
     case disabled
     case unavailable
-    case observed(DNSObserverReport, expected: Int)
+    case observed([ObservedDNSResolver])
 }
 
 public struct LeakCheckReport: Sendable {
@@ -228,30 +247,12 @@ public struct LeakCheckReport: Sendable {
             return .init(id: "dnsObserver", title: "Наблюдаемые DNS", value: "Внешний тест выключен",
                          detail: "Включается в настройках. Сервис увидит IP устройства и адреса резолверов.", level: .info)
         case .unavailable:
-            return .init(id: "dnsObserver", title: "Наблюдаемые DNS", value: "Сервис не ответил",
-                         detail: "Активный тест DNS не завершён. Повторите проверку позднее.", level: .unknown)
-        case .observed(let report, let expected):
-            let resolvers = report.answeringResolvers
-            guard report.lookups >= expected, !resolvers.isEmpty, report.truncated != true else {
-                return .init(id: "dnsObserver", title: "Наблюдаемые DNS", value: "Получена часть ответов",
-                             detail: "Дошло запросов: \(max(0, report.lookups)) из \(expected). Повторите тест.",
-                             level: .unknown)
-            }
+            return .init(id: "dnsObserver", title: "Наблюдаемые DNS", value: "Резолверы не подтверждены",
+                         detail: "bash.ws не вернул список резолверов. Можно повторить внешний тест.", level: .unknown)
+        case .observed(let resolvers):
             let labels = Set(resolvers.map(\.label)).sorted().joined(separator: ", ")
-            switch report.verdict.status {
-            case "split":
-                return .init(id: "dnsObserver", title: "Наблюдаемые DNS", value: labels,
-                             detail: "Часть запросов ушла к другому оператору. Сверьте список с DNS-настройками VPN.",
-                             level: .warning)
-            case "no_leak", "inconclusive":
-                return .init(id: "dnsObserver", title: "Наблюдаемые DNS", value: labels,
-                             detail: "Сервер увидел эти резолверы при разрешении случайных имён. Сверьте операторов с настройками VPN.",
-                             level: report.verdict.status == "inconclusive" ? .unknown : .info)
-            default:
-                return .init(id: "dnsObserver", title: "Наблюдаемые DNS", value: labels,
-                             detail: "Сервис вернул незнакомый результат. Автоматическая оценка недоступна.",
-                             level: .unknown)
-            }
+            return .init(id: "dnsObserver", title: "Наблюдаемые DNS", value: labels,
+                         detail: "bash.ws увидел эти резолверы при тесте. Сверьте их с DNS-настройками VPN.", level: .info)
         }
     }
 }

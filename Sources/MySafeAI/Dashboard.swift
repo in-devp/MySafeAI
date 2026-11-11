@@ -637,7 +637,7 @@ private struct AddressSettings: View {
                 switchRow("Проверять резолверы извне", icon: "server.rack",
                           value: model.observesDNSExternally, change: model.setObservesDNSExternally)
             } hint: {
-                Text("Маршруты DNS проверяются локально. При включении этой опции «Проверить утечки» также запустит тест на dnsleak.dev. Сервис увидит IP устройства и адреса резолверов.")
+                Text("Маршруты DNS проверяются локально. При включении этой опции «Проверить утечки» также запустит тест на bash.ws. Сервис увидит IP устройства и адреса резолверов.")
             }
 
             section("Свои HTTPS-источники") {
