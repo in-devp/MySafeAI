@@ -16,13 +16,14 @@ import (
 )
 
 type connectionPath struct {
-	mode    connectionMode
-	adapter string
-	ipv6    bool
-	network string
-	proxies map[string]*url.URL
-	hosts   []string
-	key     string
+	mode        connectionMode
+	adapter     string
+	ipv6        bool
+	network     string
+	proxies     map[string]*url.URL
+	hosts       []string
+	key         string
+	dnsVerified bool
 }
 
 func verify(ctx context.Context, c config) report {
@@ -46,7 +47,7 @@ func verifyTarget(ctx context.Context, c config, target string) report {
 	r.Adapter, r.IPv6, r.Mode, r.routeKey = path.adapter, path.ipv6, string(path.mode), path.key
 	var countries map[string]string
 	if path.mode == fullTunnel || path.mode == directRoute {
-		r.Probes = addressProbes(ctx, c, path.adapter, path.ipv6, false)
+		r.Probes = connectionAddressProbes(ctx, c, path)
 		r.IPs, err = consensus(r.Probes, path.ipv6)
 	} else {
 		r.Probes, r.IPs, countries, err = probeServicePaths(ctx, path)
@@ -60,15 +61,7 @@ func verifyTarget(ctx context.Context, c config, target string) report {
 	} else if path.network != "" && rule.Mode != automaticMode {
 		r.Reason, r.IPs = "public IP does not match the trusted local network", nil
 	} else if path.mode == directRoute {
-		if c.BlockOutsideDNS {
-			r.Reason, r.IPs = "VPN DNS is required by the current policy", nil
-		} else {
-			r.Trusted = directExitAllowed(c, r.IPs)
-			r.Reason = "direct IP requires approval"
-			if r.Trusted {
-				r.Reason = "trusted direct route verified"
-			}
-		}
+		applyDirectPolicy(&r, c, path)
 	} else {
 		r.Trusted = allowedExit(ctx, c, path.adapter, r.IPs, countries)
 		r.Reason = "verified IP is outside your allowlist"
@@ -79,8 +72,21 @@ func verifyTarget(ctx context.Context, c config, target string) report {
 	latest, err := findConnectionPath(ctx, c, rule.Mode, target)
 	if err != nil || latest.key != path.key {
 		r.Trusted, r.IPs, r.Reason = false, nil, "the connection changed during verification"
+		r.DNSBlocked = false
 	}
 	return r
+}
+
+func applyDirectPolicy(r *report, c config, path connectionPath) {
+	r.DNSBlocked = c.BlockOutsideDNS && !path.dnsVerified
+	switch {
+	case r.DNSBlocked:
+		r.Reason = "system DNS route through the current network is unconfirmed"
+	case !directExitAllowed(c, r.IPs):
+		r.Reason = "direct IP requires approval"
+	default:
+		r.Trusted, r.Reason = true, "trusted direct route verified"
+	}
 }
 
 func findConnectionPath(ctx context.Context, c config, mode connectionMode, target string) (connectionPath, error) {
@@ -149,12 +155,13 @@ func findConnectionPath(ctx context.Context, c config, mode connectionMode, targ
 			}
 		}
 	}
-	if c.BlockOutsideDNS && mode != directRoute {
+	if c.BlockOutsideDNS {
 		dns := dnsRoutes(ctx, path.adapter)
-		if dns.State != dnsTunnel {
+		path.dnsVerified = dns.State == dnsTunnel
+		if !path.dnsVerified && mode != directRoute {
 			return path, errors.New("system DNS route through the VPN is unconfirmed")
 		}
-		identity = append(identity, dns.fingerprint())
+		identity = append(identity, dns.State, dns.fingerprint())
 	}
 	identity = append(identity, string(mode), path.adapter, fmt.Sprint(path.ipv6), path.network)
 	bytes, _ := json.Marshal(identity)
@@ -258,6 +265,33 @@ func addressProbes(ctx context.Context, c config, adapter string, ipv6 bool, sys
 		}
 	}
 	pending = slices.DeleteFunc(pending, func(p provider) bool { return p.v6 && !ipv6 })
+	return probeAddresses(ctx, pending, adapter, system)
+}
+
+func connectionAddressProbes(ctx context.Context, c config, path connectionPath) []probe {
+	if len(c.Sources) != 0 || slices.Contains(c.DisabledSources, awsIPv4.name) ||
+		slices.Contains(c.DisabledSources, "Cloudflare") || slices.Contains(c.DisabledSources, ipifyIPv4.name) {
+		return addressProbes(ctx, c, path.adapter, path.ipv6, false)
+	}
+	backup := ipifyIPv4
+	if path.mode == directRoute {
+		backup = awsIPv4
+	}
+	c.DisabledSources = append(slices.Clone(c.DisabledSources), backup.name)
+	results := addressProbes(ctx, c, path.adapter, path.ipv6, false)
+	replies := 0
+	for _, item := range results {
+		if !item.ipv6 && item.IP != "" {
+			replies++
+		}
+	}
+	if replies < 2 && ctx.Err() == nil {
+		results = append(results, probeAddresses(ctx, []provider{backup}, path.adapter, false)...)
+	}
+	return results
+}
+
+func probeAddresses(ctx context.Context, pending []provider, adapter string, system bool) []probe {
 	type outcome struct {
 		index int
 		probe

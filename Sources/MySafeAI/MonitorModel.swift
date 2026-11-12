@@ -51,6 +51,7 @@ final class MonitorModel {
             previousEndpoint: defaults.string(forKey: "addressEchoEndpoint")
         )
         addressSettings.migrateIPv6Sources()
+        addressSettings.migrateIPv4Backup()
         protection.onPreflightRequested = { [weak self] in self?.refresh() }
         monitor.pathUpdateHandler = { [weak self] _ in
             Task { @MainActor [weak self] in

@@ -234,6 +234,12 @@ public struct LeakCheckReport: Sendable {
             .init(id: "dnsRoute", title: "Маршруты DNS", value: "Есть путь вне VPN",
                   detail: "Включите DNS через туннель в VPN-клиенте. MySafeAI может ставить приложения на паузу при таком маршруте.",
                   level: .warning)
+        case .viaDirect:
+            .init(id: "dnsRoute", title: "Маршруты DNS", value: "Через текущую сеть",
+                  detail: "Основные DNS-серверы доступны через интерфейс прямого подключения.", level: .good)
+        case .outsideDirect:
+            .init(id: "dnsRoute", title: "Маршруты DNS", value: "Через другую сеть",
+                  detail: "Часть основных DNS-серверов доступна через другой сетевой интерфейс.", level: .warning)
         case .unknown:
             .init(id: "dnsRoute", title: "Маршруты DNS", value: "Путь не определён",
                   detail: "Локальный DNS-прокси может пересылать запросы дальше. Его следующий сетевой участок требует отдельной проверки.",

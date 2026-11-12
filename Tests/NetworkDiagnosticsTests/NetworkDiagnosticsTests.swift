@@ -69,9 +69,9 @@ import Testing
     #expect(source.parse("ip=not-an-ip") == nil)
 }
 
-@Test func defaultsToAWSAndCloudflareAndPreservesCustomOnlySettings() throws {
+@Test func defaultsToThreeIPv4SourcesAndPreservesCustomOnlySettings() throws {
     var settings = AddressSourceSettings()
-    #expect(settings.enabledSources.map(\.name) == ["AWS", "Cloudflare", "ident.me · IPv6", "ipify · IPv6"])
+    #expect(settings.enabledSources.map(\.name) == ["AWS", "Cloudflare", "ipify", "ident.me · IPv6", "ipify · IPv6"])
     #expect(!settings.canAdd("HTTPS://CHECKIP.AMAZONAWS.COM:443"))
     let added = settings.add("https://example.com/ip")
     #expect(added)
@@ -162,6 +162,34 @@ import Testing
     #expect(DNSRoute(tunnel: "utun4", routes: []) == .unknown)
 }
 
+@Test func recognizesDNSOnTheSameDirectConnection() {
+    let wifi = DefaultRoute.other("en0")
+    #expect(DNSRoute(connection: wifi, routes: [wifi]) == .viaDirect)
+    #expect(DNSRoute(connection: wifi, routes: [wifi, .other("en1")]) == .outsideDirect)
+    #expect(DNSRoute(connection: wifi, routes: [.tunnel("utun4")]) == .outsideDirect)
+    #expect(DNSRoute(connection: wifi, routes: [wifi, .other("lo0")]) == .unknown)
+    #expect(DNSRoute(connection: wifi, routes: []) == .unknown)
+}
+
+@Test func standardSourcesCanConfirmIPv4WhileAWSIsUnavailable() throws {
+    let decoder = JSONDecoder()
+    var settings = try decoder.decode(AddressSourceSettings.self, from: Data(#"{"enabledBuiltIns":["aws","cloudflare","identIPv6","ipifyIPv6"],"customURLs":[]}"#.utf8))
+    settings.migrateIPv4Backup()
+    #expect(settings.enabledBuiltIns.contains(.ipify))
+    let route = try #require(TrustedRoute(ipv4: .other("en0"), ipv6: .missing))
+    let ip = "203.0.113.42"
+    let results: [AddressCheckResult] = [
+        .init(source: BuiltInAddressSource.aws.source, outcome: .unavailable),
+        .init(source: BuiltInAddressSource.cloudflare.source, outcome: .address(ip)),
+        .init(source: BuiltInAddressSource.ipify.source, outcome: .address(ip)),
+    ]
+    #expect(route.verify(results) == .confirmed([ip]))
+    settings.enabledBuiltIns.remove(.ipify)
+    settings = try decoder.decode(AddressSourceSettings.self, from: JSONEncoder().encode(settings))
+    settings.migrateIPv4Backup()
+    #expect(!settings.enabledBuiltIns.contains(.ipify))
+}
+
 @Test func migratesStandardAddressSourcesWithoutChangingCustomOnlyConfiguration() throws {
     let decoder = JSONDecoder()
     var settings = try decoder.decode(AddressSourceSettings.self, from: Data(#"{"enabledBuiltIns":["aws","cloudflare"],"customURLs":[]}"#.utf8))
@@ -175,6 +203,7 @@ import Testing
 
     var custom = try decoder.decode(AddressSourceSettings.self, from: Data(#"{"enabledBuiltIns":[],"customURLs":["https://example.com/ip"]}"#.utf8))
     custom.migrateIPv6Sources()
+    custom.migrateIPv4Backup()
     #expect(custom.enabledSources.map(\.name) == ["example.com"])
 }
 

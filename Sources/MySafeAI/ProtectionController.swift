@@ -399,17 +399,23 @@ final class ProtectionController {
     private func apply(_ result: ConnectionAssessment) {
         assessment = result
         let relevant = enabledPolicyIDs.union(ManagedCommand.active().map { $0.protectionTarget.id })
-        let denied = relevant.sorted().filter { result.decisions[$0]?.issue == .unexpectedAddress }
-        let direct = denied.first { result.decisions[$0]?.direct == true }
-        if isEnabled, let direct, let proof = result.decisions[direct] {
-            let access = applicationRules[direct]?.addressPolicy ?? globalAddressPolicy
-            pendingDirectTarget = applicationRules[direct]?.addressPolicy == nil ? "global" : direct
-            pendingAddresses = proof.addresses.filter { !access.allowsDirect($0) }
+        let direct = relevant.sorted().lazy.compactMap { id -> (target: String, addresses: [String])? in
+            guard let proof = result.decisions[id], proof.direct,
+                  proof.issue == .unexpectedAddress || proof.issue == .unsafeDNS else { return nil }
+            let access = self.applicationRules[id]?.addressPolicy
+            let addresses = proof.addresses.filter { !(access ?? self.globalAddressPolicy).allowsDirect($0) }
+            return addresses.isEmpty ? nil : (access == nil ? "global" : id, addresses)
+        }.first
+        if isEnabled, let direct {
+            pendingDirectTarget = direct.target
+            pendingAddresses = direct.addresses
         } else {
             pendingDirectTarget = nil
-            let proposals = denied.flatMap { id -> [String] in
-                guard applicationRules[id]?.addressPolicy == nil else { return [] }
-                return result.decisions[id]?.addresses.filter { !isGloballyTrusted($0) } ?? []
+            let proposals = relevant.sorted().flatMap { id -> [String] in
+                guard applicationRules[id]?.addressPolicy == nil,
+                      let proof = result.decisions[id], proof.issue == .unexpectedAddress,
+                      !proof.direct else { return [] }
+                return proof.addresses.filter { !isGloballyTrusted($0) }
             }
             pendingAddresses = isEnabled ? Set(proposals).sorted() : []
         }

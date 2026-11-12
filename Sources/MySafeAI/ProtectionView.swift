@@ -10,7 +10,7 @@ extension ProtectionController.Status {
         case .trusted: "Маршрут и IP подтверждены"
         case .paused(.noTunnel): "Требуемый маршрут не найден"
         case .paused(.unsafeIPv6): "Маршрут IPv6 не подтверждён"
-        case .paused(.unsafeDNS): "DNS вне VPN"
+        case .paused(.unsafeDNS): "Маршрут DNS не подтверждён"
         case .paused(.noResponse): "Не удалось подтвердить IP"
         case .paused(.disagreement): "Источники вернули разные адреса"
         case .paused(.unexpectedAddress): "IP вне списка доверенных"
@@ -411,13 +411,16 @@ struct VPNAddressApproval: View {
             case .proxyUnverified:
                 Label("Сервис не подтвердил выход через системный прокси", systemImage: "network")
             case .current(let addresses):
-                Text(protection.status == .paused(.unsafeDNS) ? "DNS идёт вне VPN"
-                     : pending.isEmpty ? protection.status.title
+                Text(pending.isEmpty ? protection.status.title
                      : declined ? "Текущий IP отклонён" : "Разрешить текущий IP?")
                     .fontWeight(.semibold)
                 if let target = protection.pendingDirectTarget {
                     Text(protection.policyTargets.first { $0.id == target }
                         .map { "Прямое подключение · \($0.title)" } ?? "Прямое подключение · без VPN")
+                        .foregroundStyle(.secondary)
+                }
+                if !pending.isEmpty && protection.status == .paused(.unsafeDNS) {
+                    Text("Приложения останутся на паузе, пока маршрут DNS не подтвердится.")
                         .foregroundStyle(.secondary)
                 }
                 ForEach(showsPrimaryAddress ? addresses : Array(addresses.dropFirst()), id: \.self) { address in

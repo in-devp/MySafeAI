@@ -22,6 +22,7 @@ type pendingApproval struct {
 	ProbeTarget string   `json:"probeTarget"`
 	RouteKey    string   `json:"routeKey"`
 	PolicyKey   string   `json:"policyKey"`
+	DNSBlocked  bool     `json:"dnsBlocked,omitempty"`
 }
 
 type watchedApp struct {
@@ -371,10 +372,14 @@ func (w *appWatch) reconcile(ctx context.Context, now time.Time, targets []appTa
 	}
 	w.populateApprovals(&status, targets, byTarget)
 	if status.State != "failed" {
+		proof := w.proofs["global"]
 		if len(w.pauses) > 0 {
 			status.State = "paused"
-		} else if proof := w.proofs["global"]; proof.Trusted {
+		} else if proof.Trusted {
 			status.State, status.CheckedAt = "protected", proof.checked
+		}
+		if proof.DNSBlocked {
+			status.Message = "Маршрут DNS через текущую сеть не подтверждён."
 		}
 	}
 	if w.policy.Notifications && wasPaused != (len(w.pauses) != 0) {
@@ -554,6 +559,9 @@ func approvalFor(c config, target string, proof report) (pendingApproval, bool) 
 		return pendingApproval{}, false
 	}
 	policy, rule := c.forTarget(target)
+	if proof.Mode == string(directRoute) && directExitAllowed(policy, proof.IPs) {
+		return pendingApproval{}, false
+	}
 	effectiveTarget := target
 	if !rule.hasAddressPolicy() && (rule.Mode == automaticMode || rule.Mode == fullTunnel) {
 		effectiveTarget = "global"
@@ -562,5 +570,6 @@ func approvalFor(c config, target string, proof report) (pendingApproval, bool) 
 	return pendingApproval{
 		ID: fmt.Sprintf("%x", sha256.Sum256([]byte(id))), Target: effectiveTarget, Adapter: proof.Adapter,
 		IPs: proof.IPs, Mode: proof.Mode, ProbeTarget: target, RouteKey: proof.routeKey, PolicyKey: policyFingerprint(c),
+		DNSBlocked: proof.DNSBlocked,
 	}, true
 }

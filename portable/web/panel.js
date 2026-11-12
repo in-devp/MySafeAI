@@ -266,7 +266,8 @@ function displayWatch(state, config) {
     get("approval-ip").textContent = pendingApproval.ips.join(" · ");
     const target = currentTargets.find((item) => item.id === pendingApproval.target);
     const connection = pendingApproval.mode === "direct" ? "Прямое подключение · без VPN" : pendingApproval.adapter;
-    get("approval-target").textContent = [target?.name || "Общее правило", connection].filter(Boolean).join(" · ");
+    const dns = pendingApproval.dnsBlocked ? "Приложения ждут подтверждения маршрута DNS" : "";
+    get("approval-target").textContent = [target?.name || "Общее правило", connection, dns].filter(Boolean).join(" · ");
   }
 }
 

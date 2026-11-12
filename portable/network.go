@@ -54,15 +54,16 @@ type probe struct {
 }
 
 type report struct {
-	Adapter  string   `json:"adapter"`
-	IPv6     bool     `json:"ipv6"`
-	IPs      []string `json:"ips,omitempty"`
-	Probes   []probe  `json:"probes,omitempty"`
-	Trusted  bool     `json:"trusted"`
-	Reason   string   `json:"reason"`
-	Mode     string   `json:"mode,omitempty"`
-	routeKey string
-	target   string
+	Adapter    string   `json:"adapter"`
+	IPv6       bool     `json:"ipv6"`
+	IPs        []string `json:"ips,omitempty"`
+	Probes     []probe  `json:"probes,omitempty"`
+	Trusted    bool     `json:"trusted"`
+	Reason     string   `json:"reason"`
+	Mode       string   `json:"mode,omitempty"`
+	DNSBlocked bool     `json:"dnsBlocked,omitempty"`
+	routeKey   string
+	target     string
 }
 
 var (
@@ -106,9 +107,15 @@ type provider struct {
 	v6, trace bool
 }
 
+var (
+	awsIPv4   = provider{"AWS", "https://checkip.amazonaws.com/", false, false}
+	ipifyIPv4 = provider{"ipify", "https://api.ipify.org/", false, false}
+)
+
 var providers = []provider{
-	{"AWS", "https://checkip.amazonaws.com/", false, false},
+	awsIPv4,
 	{"Cloudflare", "https://1.1.1.1/cdn-cgi/trace", false, true},
+	ipifyIPv4,
 	{"ipify IPv6", "https://api6.ipify.org/", true, false},
 	{"ident.me IPv6", "https://6.ident.me/", true, false},
 }

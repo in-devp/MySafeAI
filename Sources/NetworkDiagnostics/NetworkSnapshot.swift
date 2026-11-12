@@ -46,19 +46,22 @@ public struct DNSResolver: Equatable, Sendable {
 }
 
 public enum DNSRoute: Equatable, Sendable {
-    case viaTunnel, outsideTunnel, unknown
+    case viaTunnel, outsideTunnel, viaDirect, outsideDirect, unknown
 
     public init(tunnel: String, routes: [DefaultRoute]) {
-        if routes.contains(where: {
-            switch $0 {
-            case .other(let name): name != "lo0"
-            case .tunnel(let name): name != tunnel
-            case .missing, .unavailable: false
-            }
-        }) {
-            self = .outsideTunnel
-        } else if !routes.isEmpty && routes.allSatisfy({ $0 == .tunnel(tunnel) }) {
-            self = .viaTunnel
+        self.init(connection: .tunnel(tunnel), routes: routes)
+    }
+
+    public init(connection: DefaultRoute, routes: [DefaultRoute]) {
+        guard let interface = connection.interface, interface != "lo0" else {
+            self = .unknown
+            return
+        }
+        let direct = connection == .other(interface)
+        if routes.contains(where: { $0 != connection && $0.interface.map { $0 != "lo0" } == true }) {
+            self = direct ? .outsideDirect : .outsideTunnel
+        } else if !routes.isEmpty && routes.allSatisfy({ $0 == connection }) {
+            self = direct ? .viaDirect : .viaTunnel
         } else {
             self = .unknown
         }
@@ -175,7 +178,7 @@ public struct NetworkSnapshot: Equatable, Sendable {
     }
 
     private static func assessDNS(_ config: DNSConfiguration, ipv4: DefaultRoute) async -> DNSRoute {
-        guard case .tunnel(let tunnel) = ipv4, case .available(let resolvers) = config else { return .unknown }
+        guard ipv4.interface != nil, case .available(let resolvers) = config else { return .unknown }
         let servers = Set(resolvers.filter { !$0.isScoped }.flatMap(\.servers))
         return await withTaskGroup(of: DefaultRoute.self) { group in
             for server in servers {
@@ -185,7 +188,7 @@ public struct NetworkSnapshot: Equatable, Sendable {
             }
             var routes: [DefaultRoute] = []
             for await route in group { routes.append(route) }
-            return DNSRoute(tunnel: tunnel, routes: routes)
+            return DNSRoute(connection: ipv4, routes: routes)
         }
     }
 

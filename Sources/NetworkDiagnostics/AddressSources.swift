@@ -51,10 +51,11 @@ public struct AddressSource: Identifiable, Sendable {
 }
 
 public struct AddressSourceSettings: Codable, Sendable {
-    public var enabledBuiltIns: Set<BuiltInAddressSource> = [.aws, .cloudflare, .identIPv6, .ipifyIPv6]
+    public var enabledBuiltIns: Set<BuiltInAddressSource> = [.aws, .cloudflare, .ipify, .identIPv6, .ipifyIPv6]
     public private(set) var customURLs: [URL] = []
     // Existing settings predate a pair of dedicated IPv6 sources.
     private var configuresIPv6: Bool? = true
+    private var configuresIPv4Backup: Bool? = true
 
     public mutating func migrateIPv6Sources() {
         guard configuresIPv6 == nil else { return }
@@ -62,6 +63,15 @@ public struct AddressSourceSettings: Codable, Sendable {
             enabledBuiltIns.formUnion([.identIPv6, .ipifyIPv6])
         }
         configuresIPv6 = true
+    }
+
+    public mutating func migrateIPv4Backup() {
+        guard configuresIPv4Backup == nil else { return }
+        let ipv4: Set<BuiltInAddressSource> = [.aws, .cloudflare, .ipify, .ipinfo]
+        if customURLs.isEmpty && enabledBuiltIns.intersection(ipv4) == [.aws, .cloudflare] {
+            enabledBuiltIns.insert(.ipify)
+        }
+        configuresIPv4Backup = true
     }
 
     public init(previousEndpoint: String? = nil) {

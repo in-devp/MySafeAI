@@ -1,5 +1,5 @@
 pkgname=mysafeai
-pkgver=0.3.0
+pkgver=0.3.1
 pkgrel=1
 pkgdesc='Local process protection for VPN and direct connections'
 arch=('x86_64')

@@ -41,6 +41,7 @@ struct ConnectionProof: Equatable, Sendable {
     var addresses: [String] = []
     var issue: ProtectionIssue?
     var direct = false
+    var observedIPv4: String?
 }
 
 struct ConnectionAssessment: Sendable {
@@ -157,25 +158,42 @@ enum ConnectionPolicy {
 
     private static func baseProof(snapshot: NetworkSnapshot, sources: [AddressSource],
                                   blocksOutsideDNS: Bool) async -> ConnectionProof {
-        guard let route = TrustedRoute(ipv4: snapshot.ipv4, ipv6: snapshot.ipv6) else {
-            if snapshot.ipv4.interface != nil { return ConnectionProof(issue: .unsafeIPv6) }
+        guard let interface = snapshot.ipv4.interface, interface != "lo0" else {
             return ConnectionProof(issue: .noTunnel)
         }
-        let direct: Bool
-        if case .other = snapshot.ipv4 { direct = true } else { direct = false }
-        let results = await AddressClient.checkAll(
-            sources.filter { route.requiresIPv6 || !$0.isIPv6Only }, direct: true,
-            requiredRoute: snapshot.ipv4
-        )
+        let direct = snapshot.ipv4 == .other(interface)
+        let route = TrustedRoute(ipv4: snapshot.ipv4, ipv6: snapshot.ipv6)
+        guard direct || route != nil else { return ConnectionProof(issue: .unsafeIPv6) }
+        let candidates = sources.filter { route?.requiresIPv6 == true || !$0.isIPv6Only }
+        let results = await checkConnectionAddresses(candidates, route: snapshot.ipv4, direct: direct)
+        let observed = AddressCheckSummary(results).ipv4
+        let observedIPv4 = direct && observed.count == 1 ? observed.first : nil
+        guard let route else {
+            return ConnectionProof(issue: .unsafeIPv6, direct: direct, observedIPv4: observedIPv4)
+        }
         switch route.verify(results) {
         case .confirmed(let addresses):
+            let dnsBlocked = blocksOutsideDNS && (direct ? snapshot.dnsRoute != .viaDirect : snapshot.dnsRoute == .outsideTunnel)
             return ConnectionProof(addresses: addresses,
-                                   issue: blocksOutsideDNS && (direct || snapshot.dnsRoute == .outsideTunnel) ? .unsafeDNS : nil,
+                                   issue: dnsBlocked ? .unsafeDNS : nil,
                                    direct: direct)
         case .disagreement: return ConnectionProof(issue: .disagreement, direct: direct)
-        case .insufficientIPv4: return ConnectionProof(issue: .noResponse, direct: direct)
-        case .insufficientIPv6: return ConnectionProof(issue: .unsafeIPv6, direct: direct)
+        case .insufficientIPv4: return ConnectionProof(issue: .noResponse, direct: direct, observedIPv4: observedIPv4)
+        case .insufficientIPv6: return ConnectionProof(issue: .unsafeIPv6, direct: direct, observedIPv4: observedIPv4)
         }
+    }
+
+    private static func checkConnectionAddresses(_ sources: [AddressSource], route: DefaultRoute,
+                                                 direct: Bool) async -> [AddressCheckResult] {
+        let aws = BuiltInAddressSource.aws.source
+        let ipify = BuiltInAddressSource.ipify.source
+        let standardIPv4 = Set([aws.url, BuiltInAddressSource.cloudflare.source.url, ipify.url])
+        let usesBackup = Set(sources.filter { !$0.isIPv6Only }.map(\.url)) == standardIPv4
+        let backup = direct ? aws : ipify
+        let primary = usesBackup ? sources.filter { $0.url != backup.url } : sources
+        let results = await AddressClient.checkAll(primary, direct: true, requiredRoute: route)
+        guard usesBackup, !Task.isCancelled, AddressCheckSummary(results).ipv4SourceCount < 2 else { return results }
+        return results + (await AddressClient.checkAll([backup], direct: true, requiredRoute: route))
     }
 
     private static func hosts(for target: ProtectionTarget, rule: ApplicationAccessRule) -> [String] {

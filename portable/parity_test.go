@@ -189,6 +189,31 @@ func TestDirectExitRequiresIndependentApproval(t *testing.T) {
 	}
 }
 
+func TestDirectDNSKeepsAddressApprovalSeparateFromProcessAdmission(t *testing.T) {
+	const ip = "203.0.113.42"
+	c := config{BlockOutsideDNS: true}
+	path := connectionPath{mode: directRoute}
+	check := func() report {
+		proof := report{IPs: []string{ip}, Mode: string(directRoute), routeKey: "direct-path"}
+		applyDirectPolicy(&proof, c, path)
+		return proof
+	}
+	proof := check()
+	pending, ok := approvalFor(c, "codex-cli", proof)
+	if proof.Trusted || !ok || !pending.DNSBlocked || !slices.Equal(pending.IPs, []string{ip}) {
+		t.Fatalf("the DNS check must preserve the IP proposal and hold the process: %+v", proof)
+	}
+	c.DirectAllowed = []string{ip}
+	proof = check()
+	if _, ok := approvalFor(c, "codex-cli", proof); proof.Trusted || ok {
+		t.Fatalf("an approved IP must stay paused until DNS is verified: %+v", proof)
+	}
+	path.dnsVerified = true
+	if proof = check(); !proof.Trusted || proof.DNSBlocked {
+		t.Fatalf("approved direct IP and matching DNS route must be trusted: %+v", proof)
+	}
+}
+
 func TestProtectionControlsPersistAndResumeAtDeadline(t *testing.T) {
 	s := storage{t.TempDir()}
 	p := &panel{storage: s, token: "session"}

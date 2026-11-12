@@ -265,7 +265,7 @@ func captureTrustedNetwork(ctx context.Context, c config, name string) (trustedN
 	if err != nil {
 		return trustedNetwork{}, err
 	}
-	addresses, err := consensus(addressProbes(ctx, c, adapter, ipv6, false), ipv6)
+	addresses, err := consensus(connectionAddressProbes(ctx, c, connectionPath{mode: directRoute, adapter: adapter, ipv6: ipv6}), ipv6)
 	if err != nil {
 		return trustedNetwork{}, err
 	}

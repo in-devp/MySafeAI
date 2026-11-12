@@ -146,7 +146,8 @@ struct Dashboard: View {
         let summary = AddressCheckSummary(results)
         return VStack(alignment: .leading, spacing: 12) {
             NetworkCard(model: model,
-                        address: model.protection.currentAddresses.first ?? summary.preferredAddress)
+                        address: model.protection.currentAddresses.first
+                            ?? model.protection.assessment?.base.observedIPv4 ?? summary.preferredAddress)
 
             if model.protection.isEnabled {
                 let paused = !model.protection.pausedApplications.isEmpty
@@ -361,7 +362,8 @@ private struct NetworkCard: View {
             FlowLayout(spacing: 6) {
                 chip(ipv4Summary, icon: "network")
                 chip(ipv6Summary, icon: "arrow.triangle.branch", color: ipv6Color)
-                chip(dnsSummary, icon: "server.rack", color: snapshot?.dnsRoute == .outsideTunnel ? amber : ink)
+                chip(dnsSummary, icon: "server.rack",
+                     color: snapshot?.dnsRoute == .outsideTunnel || snapshot?.dnsRoute == .outsideDirect ? amber : ink)
             }
             if let network = model.protection.assessment?.trustedNetwork {
                 Label("Доверенная сеть: \(network)", systemImage: "house")
@@ -390,6 +392,7 @@ private struct NetworkCard: View {
 
     private var addressLabel: String {
         guard let address else { return "Внешний IP" }
+        if address == model.protection.assessment?.base.observedIPv4 { return "Внешний IPv4 · проверка не завершена" }
         return address.contains(":") ? "Внешний IPv6" : "Внешний IPv4"
     }
 
@@ -420,6 +423,8 @@ private struct NetworkCard: View {
         switch snapshot?.dnsRoute {
         case .viaTunnel: "DNS · через туннель"
         case .outsideTunnel: "DNS · вне VPN"
+        case .viaDirect: "DNS · через текущую сеть"
+        case .outsideDirect: "DNS · через другую сеть"
         case .unknown, nil: "DNS · путь неизвестен"
         }
     }
@@ -500,6 +505,8 @@ private struct RouteDetails: View {
         switch snapshot?.dnsRoute {
         case .viaTunnel: "Через туннель"
         case .outsideTunnel: "Вне VPN"
+        case .viaDirect: "Через текущую сеть"
+        case .outsideDirect: "Через другую сеть"
         case .unknown, nil: "Не определён"
         }
     }
@@ -615,7 +622,7 @@ private struct AddressSettings: View {
                 switchRow("Закрывать после 20 секунд", icon: "timer",
                           value: model.protection.closesAfterTimeout, change: model.protection.setClosesAfterTimeout)
                 PanelGroupDivider(inset: 44)
-                switchRow("Ставить на паузу при DNS вне VPN", icon: "network",
+                switchRow("Проверять маршрут DNS", icon: "network",
                           value: model.protection.blocksOutsideDNS, change: model.setBlocksOutsideDNS)
             } hint: {
                 Text("После потери доверенного подключения MySafeAI сначала запросит выход, а через 5 секунд завершит оставшиеся процессы.")
