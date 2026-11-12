@@ -54,6 +54,8 @@ final class ProtectionController {
     }
 
     private static let rulesKey = "localProtectionRules"
+    private static let disabledKey = "protectionManuallyDisabled"
+    private static let pauseKey = "protectionPausedUntil"
     private var rules: Rules
     private(set) var status: Status = .off
     private(set) var pausedCount = 0
@@ -64,6 +66,8 @@ final class ProtectionController {
     private(set) var addressState: AddressState = .checking
     private(set) var declinedAddresses: [String] = []
     private(set) var pendingAddresses: [String] = []
+    private(set) var pendingDirectTarget: String?
+    private(set) var protectionPausedUntil: Date?
     private(set) var assessment: ConnectionAssessment?
     let journal = ProtectionJournal()
     @ObservationIgnored var onPreflightRequested: (@MainActor () -> Void)?
@@ -101,6 +105,7 @@ final class ProtectionController {
     var closesAfterTimeout: Bool { rules.closesAfterTimeout ?? false }
     var blocksOutsideDNS: Bool { rules.blocksOutsideDNS ?? false }
     var isEnabled: Bool { status != .off && status != .failed }
+    var isManuallyDisabled: Bool { UserDefaults.standard.bool(forKey: Self.disabledKey) }
 
     var currentAddresses: [String] {
         if case .current(let addresses) = addressState { return addresses }
@@ -121,6 +126,7 @@ final class ProtectionController {
     }
 
     init() {
+        protectionPausedUntil = UserDefaults.standard.object(forKey: Self.pauseKey) as? Date
         let data = UserDefaults.standard.data(forKey: Self.rulesKey)
         rules = data.flatMap { try? JSONDecoder().decode(Rules.self, from: $0) } ?? Rules()
         if rules.desktopTargets == nil {
@@ -192,7 +198,21 @@ final class ProtectionController {
 
     func approveCurrentAddresses(_ addresses: [String]) {
         guard !addresses.isEmpty, addresses == pendingAddresses else { return }
-        rules.trustedAddresses.formUnion(addresses)
+        if let target = pendingDirectTarget {
+            if target == "global" {
+                var access = globalAddressPolicy
+                access.directAddresses = (access.directAddresses ?? []).union(addresses)
+                access.addresses = []
+                rules.globalAddresses = access
+            } else {
+                guard var rule = applicationRules[target], var access = rule.addressPolicy else { return }
+                access.directAddresses = (access.directAddresses ?? []).union(addresses)
+                rule.addressPolicy = access
+                rules.applicationRules?[target] = rule
+            }
+        } else {
+            rules.trustedAddresses.formUnion(addresses)
+        }
         saveRules()
         declinedAddresses = []
         journal.append(.approved, detail: addresses.joined(separator: ", "))
@@ -252,6 +272,7 @@ final class ProtectionController {
 
     func enable() {
         guard !isEnabled else { return }
+        setSuspension(disabled: false, until: nil)
         cancelVerification()
         cancelClose()
         enforcement?.cancel()
@@ -286,7 +307,23 @@ final class ProtectionController {
         }
     }
 
-    @discardableResult func stop() -> Bool {
+    func disableProtection() {
+        guard stop() else { return }
+        setSuspension(disabled: true, until: nil)
+    }
+
+    func pauseProtection() {
+        guard isEnabled, stop(reason: "Пауза на 15 минут") else { return }
+        setSuspension(disabled: false, until: .now.addingTimeInterval(15 * 60))
+    }
+
+    private func setSuspension(disabled: Bool, until: Date?) {
+        protectionPausedUntil = until
+        UserDefaults.standard.set(until, forKey: Self.pauseKey)
+        UserDefaults.standard.set(disabled, forKey: Self.disabledKey)
+    }
+
+    @discardableResult func stop(reason: String = "") -> Bool {
         let wasEnabled = isEnabled
         cancelVerification()
         cancelClose()
@@ -310,7 +347,7 @@ final class ProtectionController {
             protectedApplications = []
             status = .off
             if !resuming.isEmpty { journal.append(.resumed, detail: resuming) }
-            if wasEnabled { journal.append(.disabled) }
+            if wasEnabled { journal.append(.disabled, detail: reason) }
             return true
         } catch {
             status = .failed
@@ -362,12 +399,20 @@ final class ProtectionController {
     private func apply(_ result: ConnectionAssessment) {
         assessment = result
         let relevant = enabledPolicyIDs.union(ManagedCommand.active().map { $0.protectionTarget.id })
-        let proposals = relevant.sorted().flatMap { id -> [String] in
-            guard applicationRules[id]?.addressPolicy == nil,
-                  let proof = result.decisions[id], proof.issue == .unexpectedAddress else { return [] }
-            return proof.addresses.filter { !isGloballyTrusted($0) }
+        let denied = relevant.sorted().filter { result.decisions[$0]?.issue == .unexpectedAddress }
+        let direct = denied.first { result.decisions[$0]?.direct == true }
+        if isEnabled, let direct, let proof = result.decisions[direct] {
+            let access = applicationRules[direct]?.addressPolicy ?? globalAddressPolicy
+            pendingDirectTarget = applicationRules[direct]?.addressPolicy == nil ? "global" : direct
+            pendingAddresses = proof.addresses.filter { !access.allowsDirect($0) }
+        } else {
+            pendingDirectTarget = nil
+            let proposals = denied.flatMap { id -> [String] in
+                guard applicationRules[id]?.addressPolicy == nil else { return [] }
+                return result.decisions[id]?.addresses.filter { !isGloballyTrusted($0) } ?? []
+            }
+            pendingAddresses = isEnabled ? Set(proposals).sorted() : []
         }
-        pendingAddresses = isEnabled ? Set(proposals).sorted() : []
         let addresses = result.base.addresses.isEmpty
             ? relevant.sorted().compactMap { result.decisions[$0]?.addresses }.first(where: { !$0.isEmpty }) ?? []
             : result.base.addresses
@@ -447,7 +492,9 @@ final class ProtectionController {
                     if try command.admit() { permitted.insert(command.admission) }
                 }
                 let legacyAllowed = assessment.base.issue == nil && !assessment.base.addresses.isEmpty &&
-                    assessment.base.addresses.allSatisfy(isGloballyTrusted) && enabledPolicyIDs.isSubset(of: allowedTargets)
+                    assessment.base.addresses.allSatisfy {
+                        assessment.base.direct ? globalAddressPolicy.allowsDirect($0) : isGloballyTrusted($0)
+                    } && enabledPolicyIDs.isSubset(of: allowedTargets)
                 if legacyAllowed {
                     // A deleted custom rule may still own descendants in a recovered journal.
                     let known = enabledPolicyIDs.union(commands.map { $0.protectionTarget.id })
@@ -548,6 +595,7 @@ final class ProtectionController {
         allowedTargets = []
         assessment = nil
         pendingAddresses = []
+        pendingDirectTarget = nil
     }
 
     private func fail() {

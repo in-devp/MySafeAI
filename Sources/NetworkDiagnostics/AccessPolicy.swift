@@ -55,6 +55,7 @@ public struct AddressAccessPolicy: Codable, Equatable, Sendable {
     public var addresses: Set<String> = []
     public var subnets: Set<IPSubnet> = []
     public var countries: Set<String> = []
+    public var directAddresses: Set<String>?
 
     public init(addresses: Set<String> = [], subnets: Set<IPSubnet> = [], countries: Set<String> = []) {
         self.addresses = addresses
@@ -68,6 +69,11 @@ public struct AddressAccessPolicy: Codable, Equatable, Sendable {
             (country.flatMap(Self.countryCode).map(countries.contains) ?? false)
     }
 
+    public func allowsDirect(_ address: String) -> Bool {
+        guard let ip = AddressEcho.parse(address) else { return false }
+        return directAddresses?.contains(ip) == true
+    }
+
     public static func countryCode(_ value: String) -> String? {
         let code = value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         return Locale.Region.isoRegions.contains(Locale.Region(code)) ? code : nil
@@ -75,11 +81,13 @@ public struct AddressAccessPolicy: Codable, Equatable, Sendable {
 }
 
 public enum ProtectionTransport: String, CaseIterable, Codable, Sendable {
-    case tunnel, serviceTunnel, systemProxy
+    case automatic, tunnel, serviceTunnel, systemProxy
+
+    public var checksServiceHosts: Bool { self == .serviceTunnel || self == .systemProxy }
 }
 
 public struct ApplicationAccessRule: Codable, Equatable, Sendable {
-    public var transport: ProtectionTransport = .tunnel
+    public var transport: ProtectionTransport = .automatic
     public var addressPolicy: AddressAccessPolicy?
     public var allowsTrustedNetworks = true
     public var customHost: String?

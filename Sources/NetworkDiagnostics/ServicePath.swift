@@ -41,7 +41,7 @@ public struct ServicePath: Identifiable, Equatable, Sendable {
             return ipv6 == .missing || ipv6 == route
         case .systemProxy:
             return systemProxy && usedProxy == true
-        case .tunnel:
+        case .automatic, .tunnel:
             return false
         }
     }

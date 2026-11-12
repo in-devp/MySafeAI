@@ -40,6 +40,7 @@ struct ProtectionTarget: Identifiable, Sendable {
 struct ConnectionProof: Equatable, Sendable {
     var addresses: [String] = []
     var issue: ProtectionIssue?
+    var direct = false
 }
 
 struct ConnectionAssessment: Sendable {
@@ -72,15 +73,14 @@ enum ConnectionPolicy {
         async let paths = probe(direct: splitHosts, system: proxyHosts)
         async let base = baseProof(snapshot: snapshot, sources: sources, blocksOutsideDNS: blocksOutsideDNS)
         let possibleNetwork = proxy.isEnabled ? nil : networks.first { $0.id == snapshot.router }
-        async let local = possibleNetwork != nil
-            ? localAddresses(snapshot: snapshot, sources: sources) : []
-        let (generic, probes, localIPs) = await (base, paths, local)
+        let (generic, probes) = await (base, paths)
+        let localIPs = generic.direct ? generic.addresses : []
         let home = possibleNetwork?.matches(router: snapshot.router, addresses: localIPs) == true ? possibleNetwork : nil
         let usesCountries = targets.contains { !(ruleFor($0).addressPolicy ?? global).countries.isEmpty }
         let verifiedPaths = probes.filter {
             $0.confirms($0.systemProxy ? .systemProxy : .serviceTunnel, ipv6: snapshot.ipv6)
         }
-        let fallback = usesCountries && generic.issue == nil ? Set(generic.addresses) : []
+        let fallback = usesCountries && !generic.direct && generic.issue == nil ? Set(generic.addresses) : []
         let countries = usesCountries ? await serviceCountries(paths: verifiedPaths, fallback: fallback) : [:]
         let splitTunnels = Set(verifiedPaths.compactMap { path -> String? in
             if !path.systemProxy, case .tunnel(let tunnel) = path.route { return tunnel }
@@ -107,7 +107,9 @@ enum ConnectionPolicy {
                 continue
             }
             var proof = generic
-            if rule.transport != .tunnel {
+            if rule.transport == .tunnel && generic.direct {
+                proof = ConnectionProof(issue: .noTunnel)
+            } else if rule.transport.checksServiceHosts {
                 let system = rule.transport == .systemProxy
                 let required = Set(hosts(for: target, rule: rule))
                 let relevant = probes.filter { $0.systemProxy == system && required.contains($0.host) }
@@ -126,7 +128,7 @@ enum ConnectionPolicy {
             }
             let access = rule.addressPolicy ?? global
             if proof.issue == nil && (proof.addresses.isEmpty ||
-                !proof.addresses.allSatisfy({ access.allows($0, country: countries[$0]) })) {
+                !proof.addresses.allSatisfy({ proof.direct ? access.allowsDirect($0) : access.allows($0, country: countries[$0]) })) {
                 proof.issue = .unexpectedAddress
             }
             decisions[target.id] = proof
@@ -148,30 +150,31 @@ enum ConnectionPolicy {
     }
 
     static func localAddresses(snapshot: NetworkSnapshot, sources: [AddressSource]) async -> [String] {
-        guard snapshot.router != nil, case .other(let interface) = snapshot.ipv4,
-              snapshot.ipv6 == .missing || snapshot.ipv6 == .other(interface) else { return [] }
-        let summary = AddressCheckSummary(await AddressClient.checkAll(
-            sources.filter { snapshot.ipv6 != .missing || !$0.isIPv6Only }, direct: true, requiredRoute: .other(interface)
-        ))
-        guard !summary.hasDisagreement, let ipv4 = summary.confirmedIPv4 else { return [] }
-        if snapshot.ipv6 == .missing { return summary.ipv6.isEmpty ? [ipv4] : [] }
-        return summary.confirmedIPv6.map { [ipv4, $0] } ?? []
+        guard snapshot.router != nil else { return [] }
+        let proof = await baseProof(snapshot: snapshot, sources: sources, blocksOutsideDNS: false)
+        return proof.direct ? proof.addresses : []
     }
 
     private static func baseProof(snapshot: NetworkSnapshot, sources: [AddressSource],
                                   blocksOutsideDNS: Bool) async -> ConnectionProof {
         guard let route = TrustedRoute(ipv4: snapshot.ipv4, ipv6: snapshot.ipv6) else {
-            if case .tunnel = snapshot.ipv4 { return ConnectionProof(issue: .unsafeIPv6) }
+            if snapshot.ipv4.interface != nil { return ConnectionProof(issue: .unsafeIPv6) }
             return ConnectionProof(issue: .noTunnel)
         }
-        let results = await AddressClient.checkAll(sources.filter { route.requiresIPv6 || !$0.isIPv6Only }, direct: true)
+        let direct: Bool
+        if case .other = snapshot.ipv4 { direct = true } else { direct = false }
+        let results = await AddressClient.checkAll(
+            sources.filter { route.requiresIPv6 || !$0.isIPv6Only }, direct: true,
+            requiredRoute: snapshot.ipv4
+        )
         switch route.verify(results) {
         case .confirmed(let addresses):
             return ConnectionProof(addresses: addresses,
-                                   issue: blocksOutsideDNS && snapshot.dnsRoute == .outsideTunnel ? .unsafeDNS : nil)
-        case .disagreement: return ConnectionProof(issue: .disagreement)
-        case .insufficientIPv4: return ConnectionProof(issue: .noResponse)
-        case .insufficientIPv6: return ConnectionProof(issue: .unsafeIPv6)
+                                   issue: blocksOutsideDNS && (direct || snapshot.dnsRoute == .outsideTunnel) ? .unsafeDNS : nil,
+                                   direct: direct)
+        case .disagreement: return ConnectionProof(issue: .disagreement, direct: direct)
+        case .insufficientIPv4: return ConnectionProof(issue: .noResponse, direct: direct)
+        case .insufficientIPv6: return ConnectionProof(issue: .unsafeIPv6, direct: direct)
         }
     }
 

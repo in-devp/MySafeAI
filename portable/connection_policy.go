@@ -13,17 +13,20 @@ import (
 type connectionMode string
 
 const (
+	automaticMode connectionMode = "automatic"
 	fullTunnel    connectionMode = "tunnel"
 	serviceTunnel connectionMode = "service"
 	systemProxy   connectionMode = "proxy"
+	directRoute   connectionMode = "direct"
 )
 
 type appConnectionRule struct {
-	Mode         connectionMode `json:"mode,omitempty"`
-	Allowed      []string       `json:"allowed"`
-	Countries    []string       `json:"countries"`
-	TrustedLocal *bool          `json:"trustedLocal,omitempty"`
-	Host         string         `json:"host,omitempty"`
+	Mode          connectionMode `json:"mode,omitempty"`
+	Allowed       []string       `json:"allowed"`
+	DirectAllowed []string       `json:"directAllowed"`
+	Countries     []string       `json:"countries"`
+	TrustedLocal  *bool          `json:"trustedLocal,omitempty"`
+	Host          string         `json:"host,omitempty"`
 }
 
 type trustedNetwork struct {
@@ -88,7 +91,7 @@ func addressAllowed(values []string, ip netip.Addr) bool {
 }
 
 func (c config) validatePolicy() error {
-	if err := errors.Join(validateAddresses(c.Allowed), validateCountries(c.Countries)); err != nil {
+	if err := errors.Join(validateAddresses(c.Allowed), validateDirectAddresses(c.DirectAllowed), validateCountries(c.Countries)); err != nil {
 		return err
 	}
 	if len(c.CustomTargets) > 24 || len(c.TrustedNetworks) > 24 || len(c.Sources) > 16 {
@@ -115,7 +118,7 @@ func (c config) validatePolicy() error {
 			return fmt.Errorf("unknown application rule: %s", id)
 		}
 		switch rule.Mode {
-		case "", fullTunnel:
+		case "", automaticMode, fullTunnel:
 		case serviceTunnel, systemProxy:
 			if id == "managed" || len(serviceHosts(id, rule.Host)) == 0 || (rule.Mode == systemProxy && (id == "codex-cli" || id == "claude-code")) {
 				return fmt.Errorf("connection mode %s is unavailable for %s", rule.Mode, id)
@@ -126,7 +129,7 @@ func (c config) validatePolicy() error {
 		if rule.Host != "" && !validServiceHost(rule.Host) {
 			return fmt.Errorf("invalid service domain for %s", id)
 		}
-		if err := errors.Join(validateAddresses(rule.Allowed), validateCountries(rule.Countries)); err != nil {
+		if err := errors.Join(validateAddresses(rule.Allowed), validateDirectAddresses(rule.DirectAllowed), validateCountries(rule.Countries)); err != nil {
 			return fmt.Errorf("rule for %s: %w", id, err)
 		}
 	}
@@ -148,6 +151,15 @@ func (c config) validatePolicy() error {
 	return nil
 }
 
+func validateDirectAddresses(values []string) error {
+	for _, value := range values {
+		if ip, err := netip.ParseAddr(value); err != nil || ip.Zone() != "" {
+			return fmt.Errorf("invalid direct IP: %s", value)
+		}
+	}
+	return nil
+}
+
 func (source sourcePreference) provider() (provider, error) {
 	url, err := url.Parse(source.URL)
 	if err != nil || url.Scheme != "https" || url.Hostname() == "" ||
@@ -159,16 +171,21 @@ func (source sourcePreference) provider() (provider, error) {
 
 func (c config) forTarget(id string) (config, appConnectionRule) {
 	rule := c.Rules[id]
-	if rule.Allowed != nil || rule.Countries != nil {
+	if rule.hasAddressPolicy() {
 		c.Allowed, c.Countries = rule.Allowed, rule.Countries
+		c.DirectAllowed = rule.DirectAllowed
 	}
 	if rule.TrustedLocal != nil && !*rule.TrustedLocal {
 		c.TrustedNetworks = nil
 	}
 	if rule.Mode == "" {
-		rule.Mode = fullTunnel
+		rule.Mode = automaticMode
 	}
 	return c, rule
+}
+
+func (rule appConnectionRule) hasAddressPolicy() bool {
+	return rule.Allowed != nil || rule.Countries != nil || rule.DirectAllowed != nil
 }
 
 func (c config) activeTargets() []appTarget {

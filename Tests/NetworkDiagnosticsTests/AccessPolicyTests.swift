@@ -41,6 +41,25 @@ import Testing
     #expect(!profile.matches(router: "router", addresses: []))
 }
 
+@Test func directAddressesRequireSeparateExactApproval() throws {
+    let legacy = Data(#"{"addresses":["203.0.113.42"],"subnets":[],"countries":["NL"]}"#.utf8)
+    var policy = try JSONDecoder().decode(AddressAccessPolicy.self, from: legacy)
+    #expect(policy.allows("203.0.113.42", country: nil))
+    #expect(!policy.allowsDirect("203.0.113.42"))
+    policy.directAddresses = ["2001:db8::42"]
+    #expect(policy.allowsDirect("2001:0db8::42"))
+    #expect(!policy.allows("2001:db8::42", country: nil))
+    #expect(!policy.allowsDirect("2001:db8::43"))
+    #expect(try JSONDecoder().decode(AddressAccessPolicy.self, from: JSONEncoder().encode(policy)) == policy)
+}
+
+@Test func explicitVPNRuleKeepsItsTransportAfterUpgrade() throws {
+    let saved = Data(#"{"transport":"tunnel","allowsTrustedNetworks":true}"#.utf8)
+    let rule = try JSONDecoder().decode(ApplicationAccessRule.self, from: saved)
+    #expect(rule.transport == .tunnel)
+    #expect(ApplicationAccessRule().transport == .automatic)
+}
+
 @Test func servicePolicyDistinguishesPACBypassTunnelAndUnverifiedTrace() {
     func probe(system: Bool, used: Bool?, route: DefaultRoute, address: String? = "203.0.113.42") -> ServicePath {
         ServicePath(host: "api.openai.com", systemProxy: system, usedProxy: used,

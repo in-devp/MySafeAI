@@ -7,6 +7,7 @@ struct PolicySettingsView: View {
     @State private var rule = ApplicationAccessRule()
     @State private var separate = false
     @State private var addresses = ""
+    @State private var directAddresses = ""
     @State private var subnets = ""
     @State private var countries = ""
     @State private var host = ""
@@ -28,7 +29,8 @@ struct PolicySettingsView: View {
             if let target {
                 VStack(alignment: .leading, spacing: 9) {
                     Picker("Подключение", selection: $rule.transport) {
-                        Text("Туннель VPN").tag(ProtectionTransport.tunnel)
+                        Text("Автоматически · VPN или прямой выход").tag(ProtectionTransport.automatic)
+                        Text("Только VPN").tag(ProtectionTransport.tunnel)
                         if target.id != ProtectionTarget.managed.id {
                             Text("Туннель до сервисов").tag(ProtectionTransport.serviceTunnel)
                         }
@@ -44,7 +46,7 @@ struct PolicySettingsView: View {
                                 .foregroundStyle(.secondary).font(.system(size: 11))
                         }
                     }
-                    if rule.transport != .tunnel && target.hosts.isEmpty {
+                    if rule.transport.checksServiceHosts && target.hosts.isEmpty {
                         field("Хост сервиса", "example.com", $host)
                     }
                     Toggle("Отдельный список IP, подсетей и стран", isOn: $separate)
@@ -53,7 +55,7 @@ struct PolicySettingsView: View {
                         Text(proof.addresses.joined(separator: ", "))
                             .monospacedDigit().textSelection(.enabled)
                             .foregroundStyle(.secondary)
-                        if separate && proof.issue == .unexpectedAddress {
+                        if separate && !proof.direct && proof.issue == .unexpectedAddress {
                             Button("Добавить проверенные IP") {
                                 addresses = (tokens(addresses) + proof.addresses).joined(separator: ", ")
                                 feedback = nil
@@ -67,6 +69,7 @@ struct PolicySettingsView: View {
             if target == nil || separate {
                 VStack(alignment: .leading, spacing: 8) {
                     field("Отдельные IP", "203.0.113.8, 2001:db8::8", $addresses)
+                    field("IP прямого подключения", "203.0.113.8", $directAddresses)
                     field("Подсети", "203.0.113.0/24, 2001:db8::/48", $subnets)
                     field("Коды стран", "NL, DE", $countries)
                     if !countries.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -134,6 +137,7 @@ struct PolicySettingsView: View {
         separate = rule.addressPolicy != nil
         let access = rule.addressPolicy ?? model.protection.globalAddressPolicy
         addresses = access.addresses.sorted().joined(separator: ", ")
+        directAddresses = (access.directAddresses ?? []).sorted().joined(separator: ", ")
         subnets = access.subnets.map(\.notation).sorted().joined(separator: ", ")
         countries = access.countries.sorted().joined(separator: ", ")
         host = rule.customHost ?? ""
@@ -151,17 +155,20 @@ struct PolicySettingsView: View {
             let ranges = tokens(subnets)
             let codes = tokens(countries)
             let validIPs = ips.compactMap(AddressEcho.parse)
+            let direct = tokens(directAddresses)
+            let validDirect = direct.compactMap(AddressEcho.parse)
             let validRanges = ranges.compactMap(IPSubnet.init)
             let validCodes = codes.compactMap(AddressAccessPolicy.countryCode)
-            guard validIPs.count == ips.count, validRanges.count == ranges.count,
+            guard validIPs.count == ips.count, validDirect.count == direct.count, validRanges.count == ranges.count,
                   validCodes.count == codes.count else {
                 feedback = "Проверьте формат IP, подсетей CIDR и двухбуквенных кодов стран."
                 return
             }
             access = AddressAccessPolicy(addresses: Set(validIPs), subnets: Set(validRanges), countries: Set(validCodes))
+            access.directAddresses = Set(validDirect)
         }
         if let target {
-            if rule.transport != .tunnel && target.hosts.isEmpty {
+            if rule.transport.checksServiceHosts && target.hosts.isEmpty {
                 guard let value = ServicePath.validatedHost(host) else {
                     feedback = "Введите имя HTTPS-хоста сервиса."
                     return

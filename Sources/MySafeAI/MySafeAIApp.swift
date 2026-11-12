@@ -160,10 +160,11 @@ final class MySafeAIApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
             case .paused: indicator = .paused
             case .failed: indicator = .warning
             }
-            let label = needsApproval ? "MySafeAI · Подтвердить IP VPN" : "MySafeAI · \(status.title)"
+            let title = model.protection.protectionPausedUntil == nil ? status.title : "Пауза защиты"
+            let label = needsApproval ? "MySafeAI · Подтвердить IP" : "MySafeAI · \(title)"
             statusItem?.button?.image = BrandMark.menuIcon(needsApproval ? .warning : indicator, label: label)
             statusItem?.button?.toolTip = label
-            if status == .trusted || status == .off {
+            if (status == .trusted && pending.isEmpty) || status == .off {
                 offeredAddresses = []
                 if approvalPanel?.isVisible == true {
                     Task { @MainActor [weak self] in self?.approvalPanel?.close() }

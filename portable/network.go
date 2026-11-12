@@ -5,25 +5,39 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"time"
 )
 
 var noRoute = errors.New("no route")
 
 type config struct {
-	Adapter         string                       `json:"adapter"`
-	Allowed         []string                     `json:"allowed"`
-	Countries       []string                     `json:"countries,omitempty"`
-	Rules           map[string]appConnectionRule `json:"rules,omitempty"`
-	TrustedNetworks []trustedNetwork             `json:"trustedNetworks,omitempty"`
-	Sources         []sourcePreference           `json:"sources,omitempty"`
-	DisabledSources []string                     `json:"disabledSources,omitempty"`
-	Targets         []string                     `json:"targets"`
-	CustomTargets   []appTarget                  `json:"customTargets,omitempty"`
-	Watch           *bool                        `json:"watch,omitempty"`
-	CloseAfterDelay bool                         `json:"closeAfterDelay,omitempty"`
-	BlockOutsideDNS bool                         `json:"blockOutsideDNS,omitempty"`
-	ObserveDNS      bool                         `json:"observeDNS,omitempty"`
-	Notifications   bool                         `json:"notifications,omitempty"`
+	Adapter               string                       `json:"adapter"`
+	Allowed               []string                     `json:"allowed"`
+	DirectAllowed         []string                     `json:"directAllowed,omitempty"`
+	Countries             []string                     `json:"countries,omitempty"`
+	Rules                 map[string]appConnectionRule `json:"rules,omitempty"`
+	TrustedNetworks       []trustedNetwork             `json:"trustedNetworks,omitempty"`
+	Sources               []sourcePreference           `json:"sources,omitempty"`
+	DisabledSources       []string                     `json:"disabledSources,omitempty"`
+	Targets               []string                     `json:"targets"`
+	CustomTargets         []appTarget                  `json:"customTargets,omitempty"`
+	Watch                 *bool                        `json:"watch,omitempty"`
+	CloseAfterDelay       bool                         `json:"closeAfterDelay,omitempty"`
+	BlockOutsideDNS       bool                         `json:"blockOutsideDNS,omitempty"`
+	ObserveDNS            bool                         `json:"observeDNS,omitempty"`
+	Notifications         bool                         `json:"notifications,omitempty"`
+	ProtectionDisabled    bool                         `json:"protectionDisabled,omitempty"`
+	ProtectionPausedUntil *time.Time                   `json:"protectionPausedUntil,omitempty"`
+}
+
+func (c config) protectionState(now time.Time) string {
+	if c.ProtectionDisabled {
+		return "disabled"
+	}
+	if c.ProtectionPausedUntil != nil && now.Before(*c.ProtectionPausedUntil) {
+		return "suspended"
+	}
+	return ""
 }
 
 func (c config) allows(ip netip.Addr) bool {

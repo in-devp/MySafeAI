@@ -10,15 +10,19 @@ import (
 )
 
 type connectionBasics struct {
-	Adapter   string   `json:"adapter"`
-	Allowed   []string `json:"allowed"`
-	Countries []string `json:"countries"`
+	Adapter       string   `json:"adapter"`
+	Allowed       []string `json:"allowed"`
+	DirectAllowed []string `json:"directAllowed"`
+	Countries     []string `json:"countries"`
 }
 
 func (settings connectionBasics) apply(c *config) {
 	c.Adapter, c.Allowed = settings.Adapter, settings.Allowed
 	if settings.Countries != nil {
 		c.Countries = settings.Countries
+	}
+	if settings.DirectAllowed != nil {
+		c.DirectAllowed = settings.DirectAllowed
 	}
 }
 
@@ -94,6 +98,36 @@ func (p *panel) servePolicy(w http.ResponseWriter, r *http.Request, path string)
 			c.Notifications = settings.Notifications
 			return nil
 		})
+		policyResponse(w, c, err)
+	case "api/protection":
+		var request struct{ Action string }
+		if !readPanelRequest(w, r, &request) {
+			return true
+		}
+		message := ""
+		c, err := p.updatePolicy(func(c *config) error {
+			switch request.Action {
+			case "disable":
+				c.ProtectionDisabled, c.ProtectionPausedUntil = true, nil
+				message = "Защита отключена"
+			case "pause":
+				if c.protectionState(time.Now()) != "" {
+					return errors.New("защита уже приостановлена или отключена")
+				}
+				until := time.Now().Add(15 * time.Minute)
+				c.ProtectionPausedUntil = &until
+				message = "Защита на паузе на 15 минут"
+			case "resume":
+				c.ProtectionDisabled, c.ProtectionPausedUntil = false, nil
+				message = "Защита включена · проверяем подключение"
+			default:
+				return errors.New("неизвестное действие")
+			}
+			return nil
+		})
+		if err == nil {
+			p.storage.event(message)
+		}
 		policyResponse(w, c, err)
 	case "api/custom-target":
 		var request struct {
@@ -274,7 +308,8 @@ func (p *panel) updateApproval(w http.ResponseWriter, r *http.Request) {
 	}
 	key := policyFingerprint(c)
 	fresh := verifyTarget(r.Context(), c, pending.ProbeTarget)
-	if key != pending.PolicyKey || fresh.routeKey == "" || fresh.routeKey != pending.RouteKey || !slices.Equal(fresh.IPs, pending.IPs) {
+	if c.protectionState(time.Now()) != "" || key != pending.PolicyKey ||
+		fresh.routeKey == "" || fresh.routeKey != pending.RouteKey || fresh.Mode != pending.Mode || !slices.Equal(fresh.IPs, pending.IPs) {
 		http.Error(w, "the current IP or route changed, check again", http.StatusConflict)
 		return
 	}
@@ -283,14 +318,22 @@ func (p *panel) updateApproval(w http.ResponseWriter, r *http.Request) {
 			return errors.New("the policy changed during the check")
 		}
 		if pending.Target == "global" {
-			c.Allowed = appendUnique(c.Allowed, fresh.IPs...)
+			if fresh.Mode == string(directRoute) {
+				c.DirectAllowed = appendUnique(c.DirectAllowed, fresh.IPs...)
+			} else {
+				c.Allowed = appendUnique(c.Allowed, fresh.IPs...)
+			}
 		} else {
 			if c.Rules == nil {
 				c.Rules = make(map[string]appConnectionRule)
 			}
 			effective, rule := c.forTarget(pending.Target)
-			rule.Allowed = appendUnique(effective.Allowed, fresh.IPs...)
-			rule.Countries = effective.Countries
+			rule.Allowed, rule.Countries, rule.DirectAllowed = effective.Allowed, effective.Countries, effective.DirectAllowed
+			if fresh.Mode == string(directRoute) {
+				rule.DirectAllowed = appendUnique(rule.DirectAllowed, fresh.IPs...)
+			} else {
+				rule.Allowed = appendUnique(rule.Allowed, fresh.IPs...)
+			}
 			c.Rules[pending.Target] = rule
 		}
 		return nil

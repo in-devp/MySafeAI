@@ -3,6 +3,7 @@
 const get = (id) => document.getElementById(id);
 const running = new Map();
 let verified = [];
+let verifiedMode = "";
 let sessionToken = "";
 let savingWindowMode = false;
 let currentConfig = {};
@@ -45,6 +46,7 @@ function policy() {
   return {
     adapter: get("adapter").value,
     allowed: get("allowed").value.split(/[\s,;]+/).filter(Boolean),
+    directAllowed: words(get("direct-allowed").value),
     countries: words(get("countries").value.toUpperCase()),
   };
 }
@@ -68,6 +70,7 @@ function display(result) {
     ...(result.probes || []).map((p) => p.name + " · " + (p.ip || p.error)),
   ]);
   verified = result.trusted ? [] : (result.ips || []);
+  verifiedMode = result.mode;
   get("trust").hidden = verified.length === 0;
 }
 
@@ -92,11 +95,12 @@ async function refresh(first = false) {
     get("adapter").replaceChildren(new Option("Определять VPN автоматически", ""), ...[...adapters].map((name) => new Option(name, name)));
     get("adapter").value = state.config.adapter || "";
     get("allowed").value = (state.config.allowed || []).join("\n");
+    get("direct-allowed").value = (state.config.directAllowed || []).join(", ");
     get("countries").value = (state.config.countries || []).join(", ");
     get("login-start").checked = state.login;
     showConfig(state.config);
   }
-  displayWatch(state.watch);
+  displayWatch(state.watch, state.config);
   const entries = state.journal.filter(Boolean).reverse();
   get("journal-empty").hidden = entries.length !== 0;
   list(get("journal"), entries);
@@ -207,13 +211,14 @@ function showAppRule() {
   const rule = currentConfig.rules?.[id] || {};
   const hasServices = id !== "managed";
   const isCLI = id === "codex-cli" || id === "claude-code";
-  get("app-rule-mode").value = rule.mode || "tunnel";
+  get("app-rule-mode").value = rule.mode || "automatic";
   get("app-rule-mode").querySelector('[value="service"]').disabled = !hasServices;
   get("app-rule-mode").querySelector('[value="proxy"]').disabled = !hasServices || isCLI;
   get("app-rule-host").value = rule.host || "";
   get("app-rule-host").disabled = !hasServices;
-  get("app-rule-override").checked = rule.allowed != null || rule.countries != null;
+  get("app-rule-override").checked = rule.allowed != null || rule.countries != null || rule.directAllowed != null;
   get("app-rule-ips").value = (rule.allowed || []).join("\n");
+  get("app-rule-direct").value = (rule.directAllowed || []).join(", ");
   get("app-rule-countries").value = (rule.countries || []).join(", ");
   get("app-rule-local").checked = rule.trustedLocal !== false;
   toggleRuleFields();
@@ -222,15 +227,27 @@ function showAppRule() {
 function toggleRuleFields() {
   const enabled = get("app-rule-override").checked;
   get("app-rule-ips").disabled = !enabled;
+  get("app-rule-direct").disabled = !enabled;
   get("app-rule-countries").disabled = !enabled;
 }
 
-function displayWatch(state) {
+function displayWatch(state, config) {
+  const deadline = new Date(config.protectionPausedUntil || 0);
+  const suspended = !config.protectionDisabled && deadline > new Date();
+  const inactive = suspended || config.protectionDisabled;
+  get("resume-protection").hidden = !inactive;
+  get("resume-protection").textContent = suspended ? "Возобновить защиту" : "Включить защиту";
+  get("pause-protection").hidden = inactive;
+  get("disable-protection").hidden = config.protectionDisabled;
   const labels = { checking: "Проверяем подключение", protected: "Доверенное подключение",
     paused: "Приложения на паузе", off: "Автообнаружение выключено", failed: "Ошибка защиты" };
-  const message = [labels[state?.state], state?.message].filter(Boolean).join(" · ");
+  const time = suspended ? deadline.toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }) : "";
+  const label = suspended ? "Пауза защиты до " + time
+    : config.protectionDisabled ? "Защита выключена"
+    : labels[state?.state] || labels.checking;
+  const message = [label, state?.message].filter(Boolean).join(" · ");
   if (get("watch-status").textContent !== message) get("watch-status").textContent = message;
-  const apps = state?.apps || [];
+  const apps = inactive ? [] : state?.apps || [];
   const current = JSON.stringify(apps);
   if (get("watched-apps").dataset.apps !== current) {
     get("watched-apps").dataset.apps = current;
@@ -242,13 +259,14 @@ function displayWatch(state) {
     }));
   }
   const previousApproval = pendingApproval?.id;
-  pendingApproval = state?.pending?.[0] || null;
+  pendingApproval = inactive ? null : state?.pending?.[0] || null;
   get("approval-card").hidden = !pendingApproval;
   if (pendingApproval) {
     if (pendingApproval.id !== previousApproval) showPage("overview");
     get("approval-ip").textContent = pendingApproval.ips.join(" · ");
     const target = currentTargets.find((item) => item.id === pendingApproval.target);
-    get("approval-target").textContent = [target?.name || "Общее правило", pendingApproval.adapter].filter(Boolean).join(" · ");
+    const connection = pendingApproval.mode === "direct" ? "Прямое подключение · без VPN" : pendingApproval.adapter;
+    get("approval-target").textContent = [target?.name || "Общее правило", connection].filter(Boolean).join(" · ");
   }
 }
 
@@ -301,7 +319,7 @@ get("adapter").addEventListener("change", () => {
   get("ip").textContent = "";
   get("providers").replaceChildren();
   get("diagnostics").hidden = true;
-  get("route-note").textContent = "Выберите VPN-адаптер и проверьте маршрут.";
+  get("route-note").textContent = "Проверьте текущее подключение.";
   get("policy-result").textContent = "";
 });
 async function checkRoute() {
@@ -311,7 +329,11 @@ async function checkRoute() {
 action("check", checkRoute);
 action("policy-check", checkRoute);
 action("trust", () => {
-  get("allowed").value = [...new Set([...policy().allowed, ...verified])].join("\n");
+  if (verifiedMode === "direct") {
+    get("direct-allowed").value = [...new Set([...policy().directAllowed, ...verified])].join(", ");
+  } else {
+    get("allowed").value = [...new Set([...policy().allowed, ...verified])].join("\n");
+  }
   get("notice").textContent = "Адреса добавлены. Сохраните правило.";
 });
 action("save", async () => {
@@ -325,6 +347,7 @@ action("save-app-rule", async () => {
     host: get("app-rule-host").value.trim().toLowerCase() };
   if (get("app-rule-override").checked) {
     rule.allowed = words(get("app-rule-ips").value);
+    rule.directAllowed = words(get("app-rule-direct").value);
     rule.countries = words(get("app-rule-countries").value.toUpperCase());
   }
   showConfig(await request("app-rule", { id: get("app-rule-target").value, rule }));
@@ -332,6 +355,12 @@ action("save-app-rule", async () => {
 action("reset-app-rule", async () => {
   showConfig(await request("app-rule", { id: get("app-rule-target").value, rule: null }));
 });
+for (const name of ["disable", "pause", "resume"]) {
+  action(name + "-protection", async () => {
+    await request("protection", { action: name });
+    await refresh();
+  });
+}
 action("save-network", async () => {
   const name = get("network-name").value.trim();
   if (!name) throw new Error("Введите название сети.");
@@ -393,6 +422,7 @@ async function answerApproval(allow) {
     showConfig(result);
     get("adapter").value = result.adapter;
     get("allowed").value = (result.allowed || []).join("\n");
+    get("direct-allowed").value = (result.directAllowed || []).join(", ");
   }
   await refresh();
 }

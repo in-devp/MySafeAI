@@ -99,6 +99,9 @@ func (checks routeCheck) samePath(ctx context.Context, c config, proof report) (
 func (checks routeCheck) preflight(ctx context.Context, c config) (report, config) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	if c.protectionState(time.Now()) != "" {
+		return report{Reason: "Включите защиту для запуска команды через MySafeAI."}, c
+	}
 	proof := checks.verify(ctx, c)
 	if checks.load == nil || checks.monitorAvailable == nil {
 		return proof, c
@@ -120,6 +123,9 @@ func (checks routeCheck) preflight(ctx context.Context, c config) (report, confi
 		latest, err := checks.load()
 		if err != nil {
 			continue
+		}
+		if latest.protectionState(time.Now()) != "" {
+			return report{Reason: "Включите защиту для запуска команды через MySafeAI."}, latest
 		}
 		latestKey := policyFingerprint(latest)
 		if latestKey != key || time.Since(verifiedAt) >= 5*time.Second {
@@ -275,11 +281,20 @@ func startManaged(ctx context.Context, args []string, c config, checks routeChec
 	results := make(chan report, 1)
 	checking := false
 	paused := false
+	suspended := false
 	generation := uint64(0)
 	var proofGeneration uint64
 	lastVerified := time.Now()
 	previousWall := lastVerified.UnixNano()
 	var pausedSince, closingAt time.Time
+	check := func() {
+		if checking || suspended {
+			return
+		}
+		checking = true
+		proofGeneration = generation
+		go func(snapshot config) { results <- checks.verify(recheckCtx, snapshot) }(c)
+	}
 	for {
 		select {
 		case err := <-exited:
@@ -299,6 +314,9 @@ func startManaged(ctx context.Context, args []string, c config, checks routeChec
 			}
 			generation++
 			lastVerified = time.Time{}
+			if suspended {
+				break
+			}
 			if err := tree.update(true); err != nil {
 				return 70, fmt.Errorf("process control failed: %w", err)
 			}
@@ -325,6 +343,23 @@ func startManaged(ctx context.Context, args []string, c config, checks routeChec
 					}
 				}
 			}
+			if policyErr == nil && c.protectionState(time.Now()) != "" && closingAt.IsZero() {
+				if err := tree.update(false); err != nil {
+					return 70, fmt.Errorf("process control failed: %w", err)
+				}
+				if !suspended {
+					suspended = true
+					generation++
+					lastVerified = time.Time{}
+					if paused {
+						log(runRunning, "resumed "+filepath.Base(target[0])+" · protection suspended")
+					}
+					paused = false
+				}
+				break
+			}
+			resumedProtection := suspended
+			suspended = false
 			checkCtx, cancel := context.WithTimeout(ctx, time.Second)
 			samePath, path := checks.samePath(checkCtx, c, proof)
 			cancel()
@@ -340,6 +375,9 @@ func startManaged(ctx context.Context, args []string, c config, checks routeChec
 				paused, pausedSince = true, time.Now()
 				log(runPaused, "paused "+filepath.Base(target[0])+" · route changed")
 			}
+			if resumedProtection {
+				check()
+			}
 			if !closingAt.IsZero() && time.Now().After(closingAt) {
 				return 130, errors.New("program closed after VPN timeout")
 			}
@@ -348,13 +386,12 @@ func startManaged(ctx context.Context, args []string, c config, checks routeChec
 				closingAt = time.Now().Add(5 * time.Second)
 			}
 		case <-proofTick.C:
-			if !checking {
-				checking = true
-				proofGeneration = generation
-				go func(snapshot config) { results <- checks.verify(recheckCtx, snapshot) }(c)
-			}
+			check()
 		case result := <-results:
 			checking = false
+			if suspended {
+				break
+			}
 			trusted := result.Trusted && proofGeneration == generation && closingAt.IsZero()
 			if trusted && checks.load != nil {
 				current, err := checks.load()

@@ -180,10 +180,9 @@ struct Dashboard: View {
             }
 
             if model.protection.status == .off {
-                Button {
-                    history.append(.protection)
-                } label: {
-                    Label("Настроить защиту", systemImage: "shield")
+                Button(action: model.enableProtection) {
+                    Label(model.protection.protectionPausedUntil == nil ? "Включить защиту" : "Возобновить защиту",
+                          systemImage: "shield")
                 }
                 .buttonStyle(PanelButtonStyle(.primary, fullWidth: true))
             } else if model.protection.status == .failed {
@@ -264,9 +263,25 @@ struct Dashboard: View {
                     .help(model.protection.status.title)
             }
             Spacer()
-            iconButton("power", label: "Выйти из MySafeAI") {
-                NSApplication.shared.terminate(nil)
+            Menu {
+                if model.protection.isEnabled {
+                    Button("Пауза на 15 минут", action: model.pauseProtection)
+                    Button("Отключить защиту", action: model.disableProtection)
+                } else {
+                    Button(model.protection.protectionPausedUntil == nil ? "Включить защиту" : "Возобновить защиту",
+                           action: model.enableProtection)
+                    if model.protection.protectionPausedUntil != nil || model.protection.status == .failed {
+                        Button("Отключить защиту", action: model.disableProtection)
+                    }
+                }
+                Divider()
+                Button("Выйти из MySafeAI") { NSApplication.shared.terminate(nil) }
+            } label: {
+                Label("Управление защитой", systemImage: "shield.lefthalf.filled")
+                    .labelStyle(.iconOnly)
             }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
         }
         .frame(height: 37)
         .foregroundStyle(muted)
@@ -296,7 +311,10 @@ private struct NetworkCard: View {
     private var snapshot: NetworkSnapshot? { model.snapshot }
 
     private var status: (title: String, icon: String, color: Color) {
-        switch model.protection.status {
+        if let until = model.protection.protectionPausedUntil, model.protection.status == .off {
+            return ("Пауза защиты до \(until.formatted(date: .omitted, time: .shortened))", "pause.circle.fill", amber)
+        }
+        return switch model.protection.status {
         case .trusted: ("Защита активна", "checkmark.shield.fill", mint)
         case .off: ("Защита выключена", "shield", muted)
         case .checking, .paused:
@@ -350,7 +368,7 @@ private struct NetworkCard: View {
                     .font(.system(size: 11)).foregroundStyle(mint)
             }
 
-            if model.protection.isEnabled && model.protection.status != .trusted {
+            if model.protection.isEnabled && (model.protection.status != .trusted || !model.protection.pendingAddresses.isEmpty) {
                 PanelGroupDivider(inset: 0).padding(.vertical, 3)
                 VPNAddressApproval(model: model, showsPrimaryAddress: false, embedded: true)
             }
@@ -378,7 +396,7 @@ private struct NetworkCard: View {
     private var ipv4Summary: String {
         switch snapshot?.ipv4 {
         case .tunnel: "IPv4 · туннель"
-        case .other: "IPv4 · вне туннеля"
+        case .other: "IPv4 · прямой маршрут"
         case .missing: "IPv4 · нет маршрута"
         case .unavailable, nil: "IPv4 · неизвестно"
         }

@@ -13,15 +13,16 @@ mkdir -p "$root/DEBIAN" "$root/usr/bin" "$root/usr/share/applications"     "$roo
 arch=$(dpkg --print-architecture)
 cat > "$root/DEBIAN/control" <<CONTROL
 Package: mysafeai
-Version: 0.2.0
+Version: 0.3.0
 Architecture: $arch
 Maintainer: MySafeAI contributors <36034823+in-devp@users.noreply.github.com>
 Section: net
 Priority: optional
 Depends: iproute2, libgtk-4-1, libwebkitgtk-6.0-4, glib-networking
 Homepage: https://github.com/in-devp/MySafeAI
-Description: Local VPN route monitor and process protection
- MySafeAI verifies VPN routes and monitors programs launched under its protection.
+Description: Local process protection for VPN and direct connections
+ MySafeAI verifies external IP addresses and pauses protected apps until the
+ connection is approved.
 CONTROL
 install -m 755 "$1" "$root/usr/bin/mysafeai"
 install -m 644 packaging/app.mysafeai.desktop.desktop "$root/usr/share/applications/"

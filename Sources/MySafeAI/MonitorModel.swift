@@ -30,6 +30,7 @@ final class MonitorModel {
     @ObservationIgnored private var settingsObserver: NetworkSettingsObserver?
     @ObservationIgnored private var checking = false
     @ObservationIgnored private var needsRefresh = false
+    @ObservationIgnored private var protectionResumeTask: Task<Void, Never>?
     @ObservationIgnored private var networkGeneration = 0
     @ObservationIgnored private var sleeping = false
     @ObservationIgnored private var panelVisible = false
@@ -71,6 +72,9 @@ final class MonitorModel {
     }
 
     func refresh() {
+        if !sleeping, let until = protection.protectionPausedUntil, until <= .now {
+            protection.enable()
+        }
         guard !checking else {
             needsRefresh = true
             return
@@ -130,12 +134,40 @@ final class MonitorModel {
     }
 
     func enableProtection() {
+        protectionResumeTask?.cancel()
+        protectionResumeTask = nil
         protection.enable()
         refresh()
     }
 
+    func disableProtection() {
+        protectionResumeTask?.cancel()
+        protectionResumeTask = nil
+        protection.disableProtection()
+    }
+
+    func pauseProtection() {
+        protection.pauseProtection()
+        scheduleProtectionResume()
+    }
+
     func startProtectionIfConfigured() {
-        if protection.enablesOnLaunch || ProcessPauser.requiresRecovery { enableProtection() }
+        if protection.protectionPausedUntil != nil {
+            scheduleProtectionResume()
+            refresh()
+        } else if !protection.isManuallyDisabled && (protection.enablesOnLaunch || ProcessPauser.requiresRecovery) {
+            enableProtection()
+        }
+    }
+
+    private func scheduleProtectionResume() {
+        protectionResumeTask?.cancel()
+        guard let until = protection.protectionPausedUntil else { return }
+        protectionResumeTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(max(0, until.timeIntervalSinceNow)))
+            guard !Task.isCancelled, let self, self.protection.protectionPausedUntil == until else { return }
+            self.refresh()
+        }
     }
 
     func setBlocksOutsideDNS(_ enabled: Bool) {

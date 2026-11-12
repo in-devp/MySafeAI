@@ -140,6 +140,7 @@ func (w *appWatch) run(ctx context.Context) {
 	checking := false
 	nextProof := time.Time{}
 	var previousWall int64
+	var previousSuspension string
 	for {
 		now := time.Now()
 		wall := now.UnixNano()
@@ -162,8 +163,29 @@ func (w *appWatch) run(ctx context.Context) {
 				w.policy = c
 			}
 		}
+		suspension := ""
+		if err == nil {
+			suspension = c.protectionState(now)
+		}
+		if suspension != previousSuspension {
+			w.generation++
+			w.proofs = make(map[string]policyProof)
+			nextProof = time.Time{}
+			if previousSuspension == "suspended" && suspension == "" &&
+				c.ProtectionPausedUntil != nil && err == nil {
+				w.storage.event("Пауза защиты окончена · проверяем подключение")
+			}
+			previousSuspension = suspension
+		}
 		targets := w.policy.activeTargets()
-		if len(targets) == 0 && err == nil {
+		if suspension != "" {
+			status := watchStatus{State: suspension}
+			w.releaseAll()
+			if len(w.pauses) != 0 || w.recoveryErr != nil {
+				status.Message = "Не удалось снять паузу с некоторых процессов."
+			}
+			w.status.Store(&status)
+		} else if len(targets) == 0 && err == nil {
 			w.releaseAll()
 			w.status.Store(&watchStatus{State: "off"})
 		} else {
@@ -213,9 +235,9 @@ func collectProofs(ctx context.Context, c config, targets []appTarget) map[strin
 	for _, item := range append([]appTarget{{ID: "global"}}, targets...) {
 		effective, rule := c.forTarget(item.ID)
 		key := item.ID
-		if rule.Mode == fullTunnel {
+		if rule.Mode == automaticMode || rule.Mode == fullTunnel {
 			effective.Rules = nil
-			key = policyFingerprint(effective)
+			key = string(rule.Mode) + policyFingerprint(effective)
 		}
 		keys[item.ID] = key
 		if _, ok := completed[key]; ok {
@@ -528,12 +550,12 @@ func (w *appWatch) populateApprovals(status *watchStatus, targets []appTarget, a
 }
 
 func approvalFor(c config, target string, proof report) (pendingApproval, bool) {
-	if proof.Trusted || len(proof.IPs) == 0 || proof.routeKey == "" || target == "" {
+	if c.protectionState(time.Now()) != "" || proof.Trusted || len(proof.IPs) == 0 || proof.routeKey == "" || target == "" {
 		return pendingApproval{}, false
 	}
 	policy, rule := c.forTarget(target)
 	effectiveTarget := target
-	if c.Rules[target].Allowed == nil && c.Rules[target].Countries == nil && rule.Mode == fullTunnel {
+	if !rule.hasAddressPolicy() && (rule.Mode == automaticMode || rule.Mode == fullTunnel) {
 		effectiveTarget = "global"
 	}
 	id := policyFingerprint(policy) + proof.routeKey + effectiveTarget + fmt.Sprint(proof.IPs)

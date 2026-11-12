@@ -13,14 +13,14 @@
     <img src="icon.svg" alt="" width="30" height="30">
     <h1>MySafeAI</h1>
     <button id="hide-window" class="quiet" hidden>Скрыть</button>
-    <button id="exit" class="quiet">Выйти</button>
+    <button id="exit" class="quiet" aria-label="Выйти из MySafeAI">Выйти</button>
   </header>
   <main>
     <div id="overview-page">
       <section class="status" aria-live="polite">
-        <p id="status">Подключите VPN</p>
+        <p id="status">Внешний IP</p>
         <strong id="ip"></strong>
-        <p id="route-note" class="hint">Выберите VPN-адаптер и проверьте маршрут.</p>
+        <p id="route-note" class="hint">Проверьте текущее подключение.</p>
         <details id="diagnostics" hidden>
           <summary>Ответы источников</summary>
           <ul id="providers"></ul>
@@ -39,10 +39,15 @@
           <button id="decline-ip" class="quiet">Не разрешать</button>
         </div>
       </section>
-      <section class="card" id="watch-card" aria-live="polite">
+      <section class="card" id="watch-card">
         <h2>Защита приложений</h2>
-        <p id="watch-status" class="hint"></p>
+        <p id="watch-status" class="hint" role="status"></p>
         <ul id="watched-apps" class="app-list"></ul>
+        <div class="actions">
+          <button id="resume-protection" hidden>Включить защиту</button>
+          <button id="pause-protection" class="quiet">Пауза на 15 минут</button>
+          <button id="disable-protection" class="quiet">Отключить защиту</button>
+        </div>
       </section>
       <section class="card" id="leak-result" hidden aria-live="polite">
         <h2>Проверка утечек</h2>
@@ -72,6 +77,8 @@
       <select id="adapter"></select>
       <label for="allowed">Доверенные IP и подсети</label>
       <textarea id="allowed" rows="5" placeholder="203.0.113.42&#10;2001:db8::/48"></textarea>
+      <label for="direct-allowed">IP прямого подключения</label>
+      <input id="direct-allowed" placeholder="203.0.113.8">
       <label for="countries">Разрешённые страны</label>
       <input id="countries" placeholder="NL, DE">
       <div class="actions">
@@ -86,7 +93,8 @@
         <select id="app-rule-target"></select>
         <label for="app-rule-mode">Подключение</label>
         <select id="app-rule-mode">
-          <option value="tunnel">Полный VPN</option>
+          <option value="automatic">Автоматически · VPN или прямой выход</option>
+          <option value="tunnel">Только VPN</option>
           <option value="service">VPN до сервисов приложения</option>
           <option value="proxy">Системный прокси / PAC</option>
         </select>
@@ -95,6 +103,8 @@
         <label class="setting"><input id="app-rule-override" type="checkbox"> Свой список IP, подсетей и стран</label>
         <label for="app-rule-ips">IP и подсети</label>
         <textarea id="app-rule-ips" rows="3"></textarea>
+        <label for="app-rule-direct">IP прямого подключения</label>
+        <input id="app-rule-direct" placeholder="203.0.113.8">
         <label for="app-rule-countries">Страны</label>
         <input id="app-rule-countries" placeholder="NL, DE">
         <label class="setting"><input id="app-rule-local" type="checkbox"> Разрешать доверенные сети</label>

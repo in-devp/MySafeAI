@@ -142,6 +142,7 @@ func TestBasicPolicyEditPreservesAdvancedRules(t *testing.T) {
 	}
 	legacy.Rules = map[string]appConnectionRule{"codex-cli": {Allowed: []string{}, Countries: []string{}}}
 	legacy.Sources = []sourcePreference{{Name: "Test", URL: "https://test.example/ip"}}
+	legacy.DirectAllowed = []string{"203.0.113.50"}
 	if err := s.save(legacy); err != nil {
 		t.Fatal(err)
 	}
@@ -156,8 +157,130 @@ func TestBasicPolicyEditPreservesAdvancedRules(t *testing.T) {
 		t.Fatalf("cannot save basic policy: %d %s", reply.Code, reply.Body)
 	}
 	effective, _ := changed.forTarget("codex-cli")
-	if changed.Adapter != "new" || len(changed.Sources) != 1 || effective.Allowed == nil || len(effective.Allowed) != 0 {
+	if changed.Adapter != "new" || len(changed.Sources) != 1 || effective.Allowed == nil || len(effective.Allowed) != 0 ||
+		!slices.Equal(changed.DirectAllowed, legacy.DirectAllowed) || len(effective.DirectAllowed) != 0 {
 		t.Fatalf("legacy form erased rules: %+v", changed)
+	}
+}
+
+func TestDirectExitRequiresIndependentApproval(t *testing.T) {
+	const ip = "203.0.113.42"
+	c := config{Allowed: []string{ip, "203.0.113.0/24"}, Countries: []string{"NL"}}
+	proof := report{IPs: []string{ip}, Mode: string(directRoute), routeKey: "direct-path"}
+	if directExitAllowed(c, proof.IPs) {
+		t.Fatal("a tunnel rule authorized a direct exit")
+	}
+	pending, ok := approvalFor(c, "codex-cli", proof)
+	if !ok || pending.Target != "global" || pending.Mode != "direct" {
+		t.Fatalf("wrong direct proposal: %+v", pending)
+	}
+	c.DirectAllowed = []string{ip, "2001:0db8::1"}
+	if !directExitAllowed(c, []string{ip, "2001:db8::1"}) || directExitAllowed(c, []string{ip, "2001:db8::2"}) {
+		t.Fatal("direct approval must cover every confirmed address")
+	}
+	c.Rules = map[string]appConnectionRule{"codex-cli": {Allowed: []string{ip}}}
+	effective, _ := c.forTarget("codex-cli")
+	pending, ok = approvalFor(c, "codex-cli", proof)
+	if !ok || pending.Target != "codex-cli" || directExitAllowed(effective, proof.IPs) {
+		t.Fatal("an independent application rule inherited the global direct approval")
+	}
+	if validateDirectAddresses([]string{"203.0.113.0/24"}) == nil {
+		t.Fatal("accepted a subnet as an exact direct address")
+	}
+}
+
+func TestProtectionControlsPersistAndResumeAtDeadline(t *testing.T) {
+	s := storage{t.TempDir()}
+	p := &panel{storage: s, token: "session"}
+	action := func(name string) config {
+		t.Helper()
+		body, err := json.Marshal(map[string]string{"action": name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest(http.MethodPost, "/api/protection", bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-MySafeAI-Token", p.token)
+		reply := httptest.NewRecorder()
+		p.handler().ServeHTTP(reply, request)
+		if reply.Code != http.StatusOK {
+			t.Fatalf("action %s: %d %s", name, reply.Code, reply.Body)
+		}
+		c, err := s.load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	start := time.Now()
+	c := action("pause")
+	if c.ProtectionPausedUntil == nil || c.protectionState(start) != "suspended" {
+		t.Fatalf("pause was not persisted: %+v", c)
+	}
+	deadline := *c.ProtectionPausedUntil
+	if deadline.Before(start.Add(15*time.Minute)) || deadline.After(time.Now().Add(15*time.Minute)) ||
+		c.protectionState(deadline) != "" {
+		t.Fatalf("wrong pause interval: %s", deadline.Sub(start))
+	}
+	check := routeCheck{verify: func(context.Context, config) report {
+		t.Fatal("checked a new managed launch while protection was suspended")
+		return report{}
+	}}
+	if proof, _ := check.preflight(t.Context(), c); proof.Trusted {
+		t.Fatal("a new protected launch bypassed the pause")
+	}
+	if c = action("disable"); c.ProtectionPausedUntil != nil || c.protectionState(deadline) != "disabled" {
+		t.Fatal("disabled protection can restart automatically")
+	}
+	if c = action("resume"); c.ProtectionPausedUntil != nil || c.protectionState(start) != "" {
+		t.Fatal("resume did not clear the suspension")
+	}
+}
+
+func TestWatcherReleasesOwnedPauseThenRechecksWhenSuspensionExpires(t *testing.T) {
+	s := storage{t.TempDir()}
+	c := config{Targets: []string{"codex-cli"}, DisabledSources: sourceNames()}
+	if err := s.save(c); err != nil {
+		t.Fatal(err)
+	}
+	process := fixtureProcess(900021, 0, 1, "/usr/bin/codex")
+	signals := make(chan appProcessAction, 8)
+	watch := newAppWatch(s, processBackend{
+		list: func() ([]appProcess, error) { return []appProcess{process}, nil },
+		signal: func(_ appProcessKey, action appProcessAction) error {
+			process.Stopped = action == appPause
+			signals <- action
+			return nil
+		},
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		watch.run(ctx)
+	}()
+	defer func() { cancel(); <-done }()
+	nextSignal := func(want appProcessAction) {
+		t.Helper()
+		select {
+		case got := <-signals:
+			if got != want {
+				t.Fatalf("signal %v, want %v", got, want)
+			}
+		case <-time.After(8 * time.Second):
+			t.Fatalf("did not receive signal %v", want)
+		}
+	}
+	nextSignal(appPause)
+	until := time.Now().Add(2 * time.Second)
+	c.ProtectionPausedUntil = &until
+	if err := s.save(c); err != nil {
+		t.Fatal(err)
+	}
+	nextSignal(appResume)
+	nextSignal(appPause)
+	if time.Now().Before(until) {
+		t.Fatal("process was paused again before protection resumed")
 	}
 }
 

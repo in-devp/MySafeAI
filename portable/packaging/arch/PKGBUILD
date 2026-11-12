@@ -1,7 +1,7 @@
 pkgname=mysafeai
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
-pkgdesc='Local VPN route monitor and process protection'
+pkgdesc='Local process protection for VPN and direct connections'
 arch=('x86_64')
 url='https://github.com/in-devp/MySafeAI'
 license=('MIT')

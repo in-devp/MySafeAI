@@ -45,7 +45,7 @@ func verifyTarget(ctx context.Context, c config, target string) report {
 	}
 	r.Adapter, r.IPv6, r.Mode, r.routeKey = path.adapter, path.ipv6, string(path.mode), path.key
 	var countries map[string]string
-	if path.mode == fullTunnel {
+	if path.mode == fullTunnel || path.mode == directRoute {
 		r.Probes = addressProbes(ctx, c, path.adapter, path.ipv6, false)
 		r.IPs, err = consensus(r.Probes, path.ipv6)
 	} else {
@@ -57,9 +57,18 @@ func verifyTarget(ctx context.Context, c config, target string) report {
 	}
 	if path.network != "" && networkAllows(c, path.network, r.IPs) {
 		r.Trusted, r.Reason, r.Mode = true, "trusted local network verified", "local"
-	} else if path.network != "" {
-		r.Reason = "public IP does not match the trusted local network"
-		r.IPs = nil // A direct address must not become a tunnel approval.
+	} else if path.network != "" && rule.Mode != automaticMode {
+		r.Reason, r.IPs = "public IP does not match the trusted local network", nil
+	} else if path.mode == directRoute {
+		if c.BlockOutsideDNS {
+			r.Reason, r.IPs = "VPN DNS is required by the current policy", nil
+		} else {
+			r.Trusted = directExitAllowed(c, r.IPs)
+			r.Reason = "direct IP requires approval"
+			if r.Trusted {
+				r.Reason = "trusted direct route verified"
+			}
+		}
 	} else {
 		r.Trusted = allowedExit(ctx, c, path.adapter, r.IPs, countries)
 		r.Reason = "verified IP is outside your allowlist"
@@ -81,7 +90,13 @@ func findConnectionPath(ctx context.Context, c config, mode connectionMode, targ
 		fingerprint, adapter, err := localNetworkIdentity(ctx)
 		if err == nil && slices.ContainsFunc(c.TrustedNetworks, func(n trustedNetwork) bool { return n.Fingerprint == fingerprint }) {
 			path.adapter, path.network = adapter, fingerprint
-			mode, path.mode = fullTunnel, fullTunnel
+			mode, path.mode = directRoute, directRoute
+		}
+	}
+	if mode == automaticMode {
+		mode, path.mode = fullTunnel, fullTunnel
+		if iface := activeRouteInterface(ctx); iface != nil && !isTunnelAdapter(*iface) {
+			mode, path.mode, path.adapter = directRoute, directRoute, iface.Name
 		}
 	}
 	if path.adapter == "" && mode != systemProxy {
@@ -90,7 +105,7 @@ func findConnectionPath(ctx context.Context, c config, mode connectionMode, targ
 			return path, errors.New("select your VPN adapter")
 		}
 	}
-	if mode == fullTunnel {
+	if mode == fullTunnel || mode == directRoute {
 		var err error
 		path.ipv6, err = routes(ctx, path.adapter)
 		if err != nil {
@@ -134,7 +149,7 @@ func findConnectionPath(ctx context.Context, c config, mode connectionMode, targ
 			}
 		}
 	}
-	if c.BlockOutsideDNS && path.network == "" {
+	if c.BlockOutsideDNS && mode != directRoute {
 		dns := dnsRoutes(ctx, path.adapter)
 		if dns.State != dnsTunnel {
 			return path, errors.New("system DNS route through the VPN is unconfirmed")
@@ -148,29 +163,47 @@ func findConnectionPath(ctx context.Context, c config, mode connectionMode, targ
 }
 
 func automaticAdapter(ctx context.Context) string {
+	if iface := activeRouteInterface(ctx); iface != nil && isTunnelAdapter(*iface) {
+		return iface.Name
+	}
+	return ""
+}
+
+func activeRouteInterface(ctx context.Context) *net.Interface {
 	name, err := routeFor(ctx, anchors4[0])
 	if err != nil {
-		return ""
+		return nil
 	}
 	iface, err := net.InterfaceByName(name)
 	if err != nil || iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
-		return ""
+		return nil
 	}
-	lower := strings.ToLower(name)
+	return iface
+}
+
+func isTunnelAdapter(iface net.Interface) bool {
+	lower := strings.ToLower(iface.Name)
 	for _, marker := range []string{"wintun", "wireguard", "tailscale", "openvpn", "tap-windows"} {
 		if strings.Contains(lower, marker) {
-			return name
+			return true
 		}
 	}
 	for _, prefix := range []string{"tun", "utun", "tap", "wg", "ppp"} {
 		if strings.HasPrefix(lower, prefix) && strings.TrimLeft(lower[len(prefix):], "0123456789") == "" && len(lower) > len(prefix) {
-			return name
+			return true
 		}
 	}
-	if iface.Flags&net.FlagPointToPoint != 0 {
-		return name
-	}
-	return ""
+	return iface.Flags&net.FlagPointToPoint != 0
+}
+
+func directExitAllowed(c config, ips []string) bool {
+	return len(ips) > 0 && !slices.ContainsFunc(ips, func(value string) bool {
+		ip, err := netip.ParseAddr(value)
+		return err != nil || !slices.ContainsFunc(c.DirectAllowed, func(allowed string) bool {
+			candidate, err := netip.ParseAddr(allowed)
+			return err == nil && candidate == ip
+		})
+	})
 }
 
 func serviceEndpoint(host string) *url.URL {

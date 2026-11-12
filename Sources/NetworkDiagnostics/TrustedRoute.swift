@@ -18,8 +18,8 @@ public struct TrustedRoute: Equatable, Sendable {
     public let requiresIPv6: Bool
 
     public init?(ipv4: DefaultRoute, ipv6: DefaultRoute) {
-        guard case .tunnel(let interface) = ipv4 else { return nil }
-        guard ipv6 == .missing || ipv6 == .tunnel(interface) else { return nil }
+        guard let interface = ipv4.interface, interface != "lo0",
+              ipv6 == .missing || ipv6 == ipv4 else { return nil }
         self.interface = interface
         requiresIPv6 = ipv6 != .missing
     }

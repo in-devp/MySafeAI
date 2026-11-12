@@ -110,8 +110,11 @@ import Testing
     #expect(mismatch.preferredAddress == nil)
 }
 
-@Test func blocksDirectAndUnverifiedIPv6Routes() throws {
-    #expect(TrustedRoute(ipv4: .other("en0"), ipv6: .missing) == nil)
+@Test func acceptsDirectRoutesAndBlocksMixedOrUnverifiedIPv6() throws {
+    #expect(TrustedRoute(ipv4: .other("en0"), ipv6: .missing)?.requiresIPv6 == false)
+    #expect(TrustedRoute(ipv4: .other("en0"), ipv6: .other("en0"))?.requiresIPv6 == true)
+    #expect(TrustedRoute(ipv4: .other("en0"), ipv6: .other("en1")) == nil)
+    #expect(TrustedRoute(ipv4: .other("lo0"), ipv6: .missing) == nil)
     #expect(TrustedRoute(ipv4: .tunnel("utun4"), ipv6: .other("en0")) == nil)
     #expect(TrustedRoute(ipv4: .tunnel("utun4"), ipv6: .tunnel("utun5")) == nil)
     #expect(TrustedRoute(ipv4: .tunnel("utun4"), ipv6: .unavailable) == nil)

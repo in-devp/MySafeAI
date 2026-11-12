@@ -8,7 +8,7 @@ extension ProtectionController.Status {
         case .off: "Защита приложений выключена"
         case .checking: "Проверяем маршрут и IP"
         case .trusted: "Маршрут и IP подтверждены"
-        case .paused(.noTunnel): "VPN-маршрут не найден"
+        case .paused(.noTunnel): "Требуемый маршрут не найден"
         case .paused(.unsafeIPv6): "Маршрут IPv6 не подтверждён"
         case .paused(.unsafeDNS): "DNS вне VPN"
         case .paused(.noResponse): "Не удалось подтвердить IP"
@@ -203,7 +203,7 @@ struct ProtectionView: View {
                     }
                     if showsDecision {
                         VPNAddressApproval(model: model, showsPrimaryAddress: false, embedded: true)
-                    } else if !protection.isEnabled && current.contains(where: {
+                    } else if !protection.isEnabled && protection.assessment?.base.direct != true && current.contains(where: {
                         !protection.isGloballyTrusted($0)
                     }) {
                         Button {
@@ -279,7 +279,9 @@ struct ProtectionView: View {
     }
 
     private func currentAddressRow(_ address: String) -> some View {
-        let trusted = protection.isGloballyTrusted(address) || protection.assessment?.trustedNetwork != nil
+        let trusted = (protection.assessment?.base.direct == true
+            ? protection.globalAddressPolicy.allowsDirect(address)
+            : protection.isGloballyTrusted(address)) || protection.assessment?.trustedNetwork != nil
         return VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
                 Label(trusted ? "Разрешён" : "Ждёт разрешения",
@@ -337,11 +339,14 @@ struct ProtectionActions: View {
     var body: some View {
         if model.protection.status == .off {
             VStack(alignment: .leading, spacing: 6) {
-                Text(setupHint)
+                Text(model.protection.protectionPausedUntil.map {
+                    "Пауза защиты до \($0.formatted(date: .omitted, time: .shortened))."
+                } ?? setupHint)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                 Button(action: model.enableProtection) {
-                    Label("Включить защиту", systemImage: "shield")
+                    Label(model.protection.protectionPausedUntil == nil ? "Включить защиту" : "Возобновить защиту",
+                          systemImage: "shield")
                 }
                 .buttonStyle(PanelButtonStyle(.primary, fullWidth: true))
             }
@@ -351,16 +356,22 @@ struct ProtectionActions: View {
                     Label("Восстановить защиту", systemImage: "arrow.clockwise.shield")
                 }
                 .buttonStyle(PanelButtonStyle(.primary, fullWidth: true))
-                Button { model.protection.stop() } label: {
+                Button(action: model.disableProtection) {
                     Text("Отключить и снять паузу")
                 }
                 .buttonStyle(PanelButtonStyle(fullWidth: true))
             }
         } else {
-            Button { model.protection.stop() } label: {
-                Label("Отключить защиту", systemImage: "shield.slash")
+            HStack(spacing: 7) {
+                Button(action: model.pauseProtection) {
+                    Label("Пауза на 15 минут", systemImage: "pause.circle")
+                }
+                .buttonStyle(PanelButtonStyle(fullWidth: true))
+                Button(action: model.disableProtection) {
+                    Label("Отключить защиту", systemImage: "shield.slash")
+                }
+                .buttonStyle(PanelButtonStyle(fullWidth: true))
             }
-            .buttonStyle(PanelButtonStyle(fullWidth: true))
         }
     }
 }
@@ -384,9 +395,9 @@ struct VPNAddressApproval: View {
             }
             switch protection.addressState {
             case .checking:
-                Label("Определяем адрес VPN…", systemImage: "ellipsis.circle")
+                Label("Определяем внешний IP…", systemImage: "ellipsis.circle")
             case .noTunnel:
-                Label("Подключите VPN для проверки адреса", systemImage: "network")
+                Label("Нет подтверждённого маршрута IPv4", systemImage: "network")
             case .unsafeIPv6:
                 Label("Маршрут IPv6 не подтверждён", systemImage: "exclamationmark.circle")
             case .unverifiedIPv6:
@@ -402,8 +413,13 @@ struct VPNAddressApproval: View {
             case .current(let addresses):
                 Text(protection.status == .paused(.unsafeDNS) ? "DNS идёт вне VPN"
                      : pending.isEmpty ? protection.status.title
-                     : declined ? "Текущий IP отклонён" : "Разрешить текущий IP VPN?")
+                     : declined ? "Текущий IP отклонён" : "Разрешить текущий IP?")
                     .fontWeight(.semibold)
+                if let target = protection.pendingDirectTarget {
+                    Text(protection.policyTargets.first { $0.id == target }
+                        .map { "Прямое подключение · \($0.title)" } ?? "Прямое подключение · без VPN")
+                        .foregroundStyle(.secondary)
+                }
                 ForEach(showsPrimaryAddress ? addresses : Array(addresses.dropFirst()), id: \.self) { address in
                     Text(address)
                         .fontWeight(.medium)
