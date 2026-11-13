@@ -30,14 +30,14 @@ async function publishNative() {
 }
 if (nativeHost) {
   await mkdir(path.join(isolatedConfig, 'MySafeAI'), { recursive: true });
-  for (const browser of ['chromium', 'google-chrome', 'google-chrome-for-testing']) {
-    const directory = path.join(isolatedConfig, browser, 'NativeMessagingHosts');
-    await mkdir(directory, { recursive: true });
-    await writeFile(path.join(directory, 'app.mysafeai.browser.json'), JSON.stringify({
-      name: 'app.mysafeai.browser', description: 'MySafeAI isolated test host',
-      path: nativeHost, type: 'stdio', allowed_origins: ['chrome-extension://akehebbcjgcamdjgjpmhepmgjjlldbik/'],
-    }));
-  }
+  // Chromium resolves user native hosts relative to --user-data-dir, not
+  // XDG_CONFIG_HOME when that directory is explicitly overridden.
+  const directory = path.join(profile, 'NativeMessagingHosts');
+  await mkdir(directory, { recursive: true });
+  await writeFile(path.join(directory, 'app.mysafeai.browser.json'), JSON.stringify({
+    name: 'app.mysafeai.browser', description: 'MySafeAI isolated test host',
+    path: nativeHost, type: 'stdio', allowed_origins: ['chrome-extension://akehebbcjgcamdjgjpmhepmgjjlldbik/'],
+  }));
   await publishNative();
   nativeHeartbeat = setInterval(() => { void publishNative(); }, 500);
 }
