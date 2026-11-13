@@ -26,16 +26,26 @@ function showPage(page) {
   }
 }
 
-for (const button of navigation) {
-  button.addEventListener("click", () => {
-    showPage(button.dataset.page);
-    if (button.dataset.page === "settings") {
-      const title = get("settings-page").querySelector("h2");
-      title.tabIndex = -1;
-      title.focus();
-    }
-  });
+function navigatePage(page) {
+  showPage(page);
+  if (page === "settings") {
+    const title = get("settings-page").querySelector("h2");
+    title.tabIndex = -1;
+    title.focus();
+  }
 }
+
+for (const button of navigation) {
+  button.addEventListener("click", () => navigatePage(button.dataset.page));
+}
+
+document.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.code === "Comma" &&
+      !event.altKey && !event.shiftKey && !event.repeat && !event.isComposing) {
+    event.preventDefault();
+    navigatePage("settings");
+  }
+});
 
 async function request(path, body) {
   const response = await fetch("api/" + path, body === undefined ? {} : {

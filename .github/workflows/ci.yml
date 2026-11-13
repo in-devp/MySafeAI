@@ -155,6 +155,8 @@ jobs:
       - name: Install isolated test browser
         run: npx --yes --package playwright@1.65.0 playwright install --with-deps chromium
       - name: Verify real browser requests and pause page
+        env:
+          MYSAFEAI_TEST_NO_SANDBOX: "1"
         run: |
           chromium=$(python3 -c 'from pathlib import Path; print(next((Path.home()/".cache/ms-playwright").glob("chromium-*/chrome-linux*/chrome")))')
           test -n "$chromium"

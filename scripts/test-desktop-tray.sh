@@ -121,17 +121,15 @@ activate_item
 wait_for window_visible
 printf 'Opened, closed to Xfce tray and reopened through StatusNotifierItem.Activate\n'
 
-# The Settings heading receives focus on navigation. Its first control is
-# the tray-only checkbox, independent of the size of the settings form.
+# Ctrl+, opens Settings and focuses its heading without screen coordinates.
+# Focus order: language selector, connect-browser button, browser guide link,
+# then the tray-only checkbox. Keep this in sync with web/index.html.
 window=$(window_id)
 xdotool windowactivate --sync "$window"
 sleep 1
-dimensions=$(xdotool getwindowgeometry --shell "$window")
-width=$(printf '%s\n' "$dimensions" | sed -n 's/^WIDTH=//p')
-height=$(printf '%s\n' "$dimensions" | sed -n 's/^HEIGHT=//p')
-xdotool mousemove --window "$window" "$((width - 59))" "$((height - 28))" click 1
+xdotool key --clearmodifiers ctrl+comma
 sleep 0.4
-xdotool key --delay 100 Tab space
+xdotool key --clearmodifiers --delay 150 Tab Tab Tab Tab space
 wait_for window_hidden
 grep -q '"trayOnly":true' "$XDG_CONFIG_HOME/MySafeAI/window.json"
 if [ -n "$screenshot" ]; then

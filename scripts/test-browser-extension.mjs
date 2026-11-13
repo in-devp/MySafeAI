@@ -51,6 +51,9 @@ await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const port = server.address().port;
 const child = spawn(executable, [
   '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
+  // Only the disposable CI browser opts out of Linux user-namespace sandboxing.
+  // Ubuntu runner policies can deny it; installed user browsers are unchanged.
+  ...(process.platform === 'linux' && process.env.MYSAFEAI_TEST_NO_SANDBOX === '1' ? ['--no-sandbox'] : []),
   `--disable-extensions-except=${extension}`, `--load-extension=${extension}`,
   '--no-first-run', '--no-default-browser-check', '--disable-background-networking',
   '--no-proxy-server', '--disable-component-update', '--disable-sync',
@@ -78,7 +81,10 @@ try {
       if (match) { clearTimeout(timeout); resolve(match[1]); }
     });
     child.once('error', reject);
-    child.once('exit', code => { clearTimeout(timeout); reject(new Error(`Chromium exited: ${code}`)); });
+    child.once('exit', (code, signal) => {
+      clearTimeout(timeout);
+      reject(new Error(`Chromium exited: ${code ?? signal}\n${output.slice(-8000)}`));
+    });
   });
   socket = new WebSocket(endpoint);
   await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });
