@@ -17,7 +17,7 @@ jobs:
     container: archlinux:base-devel
     steps:
       - name: Install Arch build dependencies
-        run: pacman -Syu --noconfirm --needed git go gtk4 webkitgtk-6.0 iproute2 glib-networking dbus xorg-server-xvfb xorg-xauth xfce4-panel xfwm4 xdotool imagemagick ttf-dejavu
+        run: pacman -Syu --noconfirm --needed git go gtk4 webkitgtk-6.0 iproute2 glib-networking dbus xorg-server-xvfb xorg-xauth xfce4-panel xfwm4 xdotool imagemagick ttf-dejavu python-gobject at-spi2-core
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -43,8 +43,11 @@ jobs:
         env:
           # The container's seccomp policy prevents WebKit from starting bubblewrap.
           WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS: "1"
+          GTK_A11Y: atspi
+          MYSAFEAI_TRAY_SETTINGS_HELPER: /tmp/mysafeai-tray-settings
         run: |
           install -m 755 scripts/test-desktop-tray.sh /tmp/mysafeai-tray-check
+          install -m 755 scripts/test-tray-settings-atspi.py /tmp/mysafeai-tray-settings
           status=0
           runuser -u builder -- xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- /tmp/mysafeai-tray-check /usr/bin/mysafeai /tmp/mysafeai-arch.png || status=$?
           if [ -f /tmp/mysafeai-arch.png ]; then
@@ -93,8 +96,8 @@ jobs:
             "$go_bin" build -tags production -trimpath -o ../dist/freebsd/mysafeai .
             "$go_bin" build -trimpath -o ../dist/freebsd/mysafeai-browser-host ./cmd/browser-host
             ../dist/freebsd/mysafeai --help
-            cp ../LICENSE ../README.md ../dist/freebsd/
-            tar -czf ../dist/MySafeAI-FreeBSD-amd64.tar.gz -C ../dist/freebsd mysafeai mysafeai-browser-host LICENSE README.md
+            cp ../LICENSE ../README.md ../README.en.md ../dist/freebsd/
+            tar -czf ../dist/MySafeAI-FreeBSD-amd64.tar.gz -C ../dist/freebsd mysafeai mysafeai-browser-host LICENSE README.md README.en.md
             install -m 755 ../dist/freebsd/mysafeai /tmp/mysafeai-freebsd
             install -m 755 ../scripts/test-desktop-tray.sh /tmp/mysafeai-tray-check
             su builder -c '

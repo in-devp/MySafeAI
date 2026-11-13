@@ -93,7 +93,7 @@ jobs:
           go build -tags production -trimpath -o "../dist/package/${{ matrix.bin }}" .
           go build -trimpath -o "../dist/package/mysafeai-browser-host${{ runner.os == 'Windows' && '.exe' || '' }}" ./cmd/browser-host
           "../dist/package/${{ matrix.bin }}" --help
-          cp ../LICENSE ../README.md ../dist/package/
+          cp ../LICENSE ../README.md ../README.en.md ../dist/package/
       - name: Open and verify the Linux desktop window
         if: runner.os == 'Linux'
         run: xvfb-run -a dbus-run-session -- ../dist/package/mysafeai _smoke-ui
@@ -109,7 +109,7 @@ jobs:
           if ($process.ExitCode -ne 0) { exit $process.ExitCode }
       - name: Archive Linux binary
         if: runner.os == 'Linux'
-        run: tar -czf "../dist/MySafeAI-Linux-${{ matrix.arch }}.tar.gz" -C ../dist/package mysafeai mysafeai-browser-host LICENSE README.md
+        run: tar -czf "../dist/MySafeAI-Linux-${{ matrix.arch }}.tar.gz" -C ../dist/package mysafeai mysafeai-browser-host LICENSE README.md README.en.md
       - name: Package Linux desktop launcher
         if: runner.os == 'Linux'
         run: ./packaging/linux-deb.sh ../dist/package/mysafeai "../dist/MySafeAI-Linux-${{ matrix.arch }}.deb"

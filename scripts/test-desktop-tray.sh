@@ -121,19 +121,25 @@ activate_item
 wait_for window_visible
 printf 'Opened, closed to Xfce tray and reopened through StatusNotifierItem.Activate\n'
 
-# Ctrl+, opens Settings and focuses its heading without screen coordinates.
-# Focus order: language selector, connect-browser button, browser guide link,
-# then the tray-only checkbox. Keep this in sync with web/index.html.
-window=$(window_id)
-xdotool windowactivate --sync "$window"
-sleep 1
-# Wails presents the GTK window after tray activation, but the WebView may
-# not yet own keyboard focus. Tab enters it without activating a control.
-xdotool key --clearmodifiers Tab
-sleep 0.2
-xdotool key --clearmodifiers ctrl+comma
-sleep 0.4
-xdotool key --clearmodifiers --delay 150 Tab Tab Tab Tab space
+if [ -n "${MYSAFEAI_TRAY_SETTINGS_HELPER:-}" ]; then
+    # The helper waits for the real enabled controls to appear in AT-SPI.
+    # This proves that the installed WebKit panel loaded before activation.
+    python3 "$MYSAFEAI_TRAY_SETTINGS_HELPER" "$app_pid"
+else
+    # Ctrl+, opens Settings and focuses its heading without screen coordinates.
+    # Focus order: language selector, connect-browser button, browser guide link,
+    # then the tray-only checkbox. Keep this in sync with web/index.html.
+    window=$(window_id)
+    xdotool windowactivate --sync "$window"
+    sleep 1
+    # Wails presents the GTK window after tray activation, but the WebView may
+    # not yet own keyboard focus. Tab enters it without activating a control.
+    xdotool key --clearmodifiers Tab
+    sleep 0.2
+    xdotool key --clearmodifiers ctrl+comma
+    sleep 0.4
+    xdotool key --clearmodifiers --delay 150 Tab Tab Tab Tab space
+fi
 wait_for window_hidden
 grep -q '"trayOnly":true' "$XDG_CONFIG_HOME/MySafeAI/window.json"
 if [ -n "$screenshot" ]; then
