@@ -2,9 +2,10 @@
 // fixture server; no requests to AI services or user browser settings.
 // Usage: node scripts/test-browser-extension.mjs /path/to/chromium [extension]
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { createServer } from 'node:http';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { spawn, execFileSync } from 'node:child_process';
+import { createServer } from 'node:https';
+import { createHash, X509Certificate } from 'node:crypto';
+import { mkdtemp, rm, mkdir, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -42,7 +43,14 @@ if (nativeHost) {
   nativeHeartbeat = setInterval(() => { void publishNative(); }, 500);
 }
 const hits = [];
-const server = createServer((request, response) => {
+const keyFile = path.join(profile, 'fixture.key');
+const certFile = path.join(profile, 'fixture.crt');
+execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+  '-keyout', keyFile, '-out', certFile, '-days', '1', '-subj', '/CN=MySafeAI fixture'], { stdio: 'ignore' });
+const cert = await readFile(certFile);
+const key = await readFile(keyFile);
+const fixtureSPKI = createHash('sha256').update(new X509Certificate(cert).publicKey.export({ type: 'spki', format: 'der' })).digest('base64');
+const server = createServer({ key, cert }, (request, response) => {
   hits.push(request.headers.host + request.url);
   response.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' });
   response.end('<!doctype html><title>MySafeAI network fixture</title><p>Local fixture loaded</p>');
@@ -51,6 +59,8 @@ await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const port = server.address().port;
 const child = spawn(executable, [
   '--headless=new', '--remote-debugging-port=0', `--user-data-dir=${profile}`,
+  // Trust only this temporary fixture certificate, retaining HTTPS-first behavior.
+  `--ignore-certificate-errors-spki-list=${fixtureSPKI}`,
   // Only the disposable CI browser opts out of Linux user-namespace sandboxing.
   // Ubuntu runner policies can deny it; installed user browsers are unchanged.
   ...(process.platform === 'linux' && process.env.MYSAFEAI_TEST_NO_SANDBOX === '1' ? ['--no-sandbox'] : []),
@@ -60,6 +70,8 @@ const child = spawn(executable, [
   '--host-resolver-rules=MAP chatgpt.com 127.0.0.1, MAP chatgpt.com. 127.0.0.1, MAP unrelated.test 127.0.0.1, MAP custom.example.com 127.0.0.1, MAP custom.example.com. 127.0.0.1',
 ], { stdio: ['ignore', 'ignore', 'pipe'], env: { ...process.env, ...(nativeHost ? { XDG_CONFIG_HOME: isolatedConfig } : {}) } });
 let socket;
+let diagnostics;
+const networkErrors = [];
 const pending = new Map();
 let sequence = 0;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -90,6 +102,7 @@ try {
   await new Promise((resolve, reject) => { socket.onopen = resolve; socket.onerror = reject; });
   socket.onmessage = event => {
     const message = JSON.parse(event.data);
+    if (message.method === 'Network.loadingFailed') networkErrors.push(message.params.errorText);
     if (!message.id) return;
     const request = pending.get(message.id);
     if (!request) return;
@@ -116,12 +129,21 @@ try {
     if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
     return result.result.value;
   };
+  diagnostics = async () => ({
+    status: await evaluate('guard.snapshot()'),
+    rules: await evaluate('chrome.declarativeNetRequest.getSessionRules()'),
+    tabs: (await call('Target.getTargets')).targetInfos.filter(target => target.type === 'page').map(target => target.url),
+    hits, networkErrors,
+  });
   await eventually(() => evaluate("typeof boot !== 'undefined'"), 'Extension background script did not initialize');
   await evaluate('boot');
   assert.equal((await evaluate('guard.snapshot()')).allowed, false);
-  await call('Target.createTarget', { url: `http://unrelated.test:${port}/unrelated` });
+  const unrelatedTarget = await call('Target.createTarget', { url: 'about:blank' });
+  const unrelatedSession = (await call('Target.attachToTarget', { targetId: unrelatedTarget.targetId, flatten: true })).sessionId;
+  await call('Network.enable', {}, unrelatedSession);
+  await call('Page.navigate', { url: `https://unrelated.test:${port}/unrelated` }, unrelatedSession);
   await eventually(() => hits.some(hit => hit.endsWith('/unrelated')), 'Unrelated tab was blocked');
-  await call('Target.createTarget', { url: `http://chatgpt.com:${port}/protected` });
+  await call('Target.createTarget', { url: `https://chatgpt.com:${port}/protected` });
   await eventually(async () => (await call('Target.getTargets')).targetInfos.some(target => target.url.endsWith('/blocked.html')), 'Protected tab did not show the pause page');
   assert.equal(hits.some(hit => hit.endsWith('/protected')), false, 'Blocked request reached the fixture');
 
@@ -144,6 +166,9 @@ try {
   await eventually(async () => (await evaluate('guard.snapshot()')).allowed, 'Fresh native fixture was not admitted');
   await evaluate('guard.queue');
   const paused = await evaluate(`chrome.tabs.query({}).then(tabs => tabs.find(tab => tab.url === chrome.runtime.getURL('blocked.html')).id)`);
+  const pausedTarget = (await call('Target.getTargets')).targetInfos.find(target => target.url.endsWith('/blocked.html'));
+  const pausedSession = (await call('Target.attachToTarget', { targetId: pausedTarget.targetId, flatten: true })).sessionId;
+  await call('Network.enable', {}, pausedSession);
   await evaluate(`guard.restore(${paused})`);
   await eventually(() => hits.some(hit => hit.endsWith('/protected')), 'Trusted site did not resume');
   const beforeBlock = hits.filter(hit => hit.endsWith('/protected')).length;
@@ -155,21 +180,21 @@ try {
   await eventually(async () => !(await evaluate('guard.snapshot()')).allowed, 'Native denial did not revoke permission');
   await evaluate('guard.queue');
   assert.equal((await evaluate('chrome.declarativeNetRequest.getSessionRules()')).length, 0);
-  await call('Target.createTarget', { url: `http://chatgpt.com:${port}/protected` });
+  await call('Target.createTarget', { url: `https://chatgpt.com:${port}/protected` });
   await delay(300);
   assert.equal(hits.filter(hit => hit.endsWith('/protected')).length, beforeBlock, 'Revoked permission still sent a request');
-  await call('Target.createTarget', { url: `http://unrelated.test:${port}/still-works` });
+  await call('Target.createTarget', { url: `https://unrelated.test:${port}/still-works` });
   await eventually(() => hits.some(hit => hit.endsWith('/still-works')), 'Unrelated site stopped after a denial');
 
   await evaluate("guard.editCustom('add', 'custom.example.com')");
   await evaluate('guard.queue');
   const customRules = await evaluate('chrome.declarativeNetRequest.getDynamicRules()');
   assert.ok(customRules.some(rule => rule.action.type === 'block' && rule.condition.requestDomains?.includes('custom.example.com')), 'Custom site has no persistent deny rule');
-  await call('Target.createTarget', { url: `http://custom.example.com:${port}/custom-blocked` });
+  await call('Target.createTarget', { url: `https://custom.example.com:${port}/custom-blocked` });
   await delay(300);
   assert.equal(hits.some(hit => hit.endsWith('/custom-blocked')), false, 'Custom site bypassed its block');
-  await call('Target.createTarget', { url: `http://custom.example.com.:${port}/custom-trailing-dot` });
-  await call('Target.createTarget', { url: `http://chatgpt.com.:${port}/preset-trailing-dot` });
+  await call('Target.createTarget', { url: `https://custom.example.com.:${port}/custom-trailing-dot` });
+  await call('Target.createTarget', { url: `https://chatgpt.com.:${port}/preset-trailing-dot` });
   await delay(300);
   assert.equal(hits.some(hit => hit.endsWith('/custom-trailing-dot') || hit.endsWith('/preset-trailing-dot')), false, 'Trailing-dot domain bypassed a block');
   await evaluate("guard.setLanguage('en')");
@@ -186,6 +211,9 @@ try {
   await mkdir('dist', { recursive: true });
   await writeFile('dist/browser-popup.png', Buffer.from(screenshot.data, 'base64'));
   console.log(`PASS: real Chromium static deny, unrelated tab, ${nativeHost ? 'real native bridge' : 'native fixture'} grant/revoke, manual restore, persistent custom domain, English popup`);
+} catch (error) {
+  if (diagnostics) console.error(JSON.stringify(await diagnostics(), null, 2));
+  throw error;
 } finally {
   clearInterval(nativeHeartbeat);
   await nativeWrite;

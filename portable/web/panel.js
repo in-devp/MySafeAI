@@ -40,7 +40,7 @@ for (const button of navigation) {
 }
 
 document.addEventListener("keydown", (event) => {
-  if ((event.ctrlKey || event.metaKey) && event.code === "Comma" &&
+  if ((event.ctrlKey || event.metaKey) && (event.code === "Comma" || event.key === ",") &&
       !event.altKey && !event.shiftKey && !event.repeat && !event.isComposing) {
     event.preventDefault();
     navigatePage("settings");

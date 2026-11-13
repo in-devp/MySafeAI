@@ -127,6 +127,10 @@ printf 'Opened, closed to Xfce tray and reopened through StatusNotifierItem.Acti
 window=$(window_id)
 xdotool windowactivate --sync "$window"
 sleep 1
+# Wails presents the GTK window after tray activation, but the WebView may
+# not yet own keyboard focus. Tab enters it without activating a control.
+xdotool key --clearmodifiers Tab
+sleep 0.2
 xdotool key --clearmodifiers ctrl+comma
 sleep 0.4
 xdotool key --clearmodifiers --delay 150 Tab Tab Tab Tab space
