@@ -25,6 +25,12 @@ var (
 
 	appPausesMu sync.Mutex
 	appPauses   = make(map[appProcessKey]windowsAppPause)
+
+	appInventoryMu  sync.Mutex
+	appInventory    = make(map[appProcessKey]appProcess)
+	appBatchMu      sync.Mutex
+	appBatchActive  bool
+	appBatchThreads map[uint32][]uint32
 )
 
 type windowsAppPause struct {
@@ -57,7 +63,36 @@ func windowsAppOwnerForToken(token windows.Token) (windowsAppOwner, error) {
 	return windowsAppOwner{user: user.User.Sid, session: session}, nil
 }
 
+func init() {
+	beginAppProcessBatch = beginWindowsAppProcessBatch
+}
+
+// Thread inventory is shared only for this reconciliation. A later poll or
+// network event always takes a new snapshot, including newly created threads.
+func beginWindowsAppProcessBatch() func() {
+	appBatchMu.Lock()
+	appPausesMu.Lock()
+	appBatchActive, appBatchThreads = true, nil
+	appPausesMu.Unlock()
+	return func() {
+		appPausesMu.Lock()
+		appBatchActive, appBatchThreads = false, nil
+		appPausesMu.Unlock()
+		appBatchMu.Unlock()
+	}
+}
+
+func windowsAppNeedsArguments(executable, self string) bool {
+	switch executableBase(executable) {
+	case "node", "nodejs", "bun", "mysafeai", "mysafeai-desktop":
+		return true
+	}
+	return self != "" && matchesExecutable(executable, self)
+}
+
 func listAppProcesses() ([]appProcess, error) {
+	appInventoryMu.Lock()
+	defer appInventoryMu.Unlock()
 	owner, err := windowsAppOwnerForToken(windows.GetCurrentProcessToken())
 	if err != nil {
 		return nil, err
@@ -69,35 +104,53 @@ func listAppProcesses() ([]appProcess, error) {
 	defer windows.CloseHandle(snapshot)
 
 	stopped := windowsAppStopped()
+	self, _ := os.Executable()
+	nextInventory := make(map[appProcessKey]appProcess)
 	var processes []appProcess
 	var entry windows.ProcessEntry32
 	entry.Size = uint32(unsafe.Sizeof(entry))
 	for err := windows.Process32First(snapshot, &entry); ; err = windows.Process32Next(snapshot, &entry) {
 		if errors.Is(err, windows.ERROR_NO_MORE_FILES) {
+			appInventory = nextInventory
 			return processes, nil
 		}
 		if err != nil {
 			return nil, err
 		}
-		process, key, err := openWindowsAppProcess(int(entry.ProcessID), 0, owner, 0)
+		if entry.ProcessID <= 1 {
+			continue
+		}
+		process, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.SYNCHRONIZE, false, entry.ProcessID)
 		if err != nil {
 			continue
 		}
-		executable := windowsAppExecutable(process)
-		var arguments []string
-		var parent int
-		if executable != "" {
-			arguments = windowsAppArguments(process)
-			parent = windowsAppParent(process)
+		key, identityErr := windowsAppProcessIdentity(process, int(entry.ProcessID), 0)
+		item, cached := appInventory[key]
+		if identityErr == nil && !cached {
+			_, identityErr = verifyWindowsAppProcess(process, key.PID, key.Started, owner)
+			if identityErr == nil {
+				executable := windowsAppExecutable(process)
+				item = appProcess{Key: key, Parent: windowsAppParent(process), Order: key.Started, Executable: executable}
+				if windowsAppNeedsArguments(executable, self) {
+					item.Arguments = windowsAppArguments(process)
+				}
+			}
 		}
+		// The immutable cache is keyed by PID AND creation time, never PID
+		// alone. Every control operation still verifies owner, session and
+		// critical-process status through a fresh native handle.
+		alive := windowsAppAlive(process)
 		_ = windows.CloseHandle(process)
-		if executable == "" {
+		if identityErr != nil || alive != nil || item.Executable == "" {
 			continue
 		}
-		processes = append(processes, appProcess{
-			Key: key, Parent: parent, Order: key.Started, Executable: executable,
-			Arguments: arguments, Stopped: stopped[key],
-		})
+		item.Stopped = stopped[key]
+		// A process can become visible before its command line is readable.
+		// Retry incomplete metadata instead of permanently missing CLI wrappers.
+		if item.Parent != 0 && (!windowsAppNeedsArguments(item.Executable, self) || len(item.Arguments) > 1) {
+			nextInventory[key] = item
+		}
+		processes = append(processes, item)
 	}
 }
 
@@ -120,7 +173,7 @@ func openWindowsAppProcess(pid int, started uint64, owner windowsAppOwner, extra
 	return process, key, nil
 }
 
-func verifyWindowsAppProcess(process windows.Handle, pid int, started uint64, owner windowsAppOwner) (appProcessKey, error) {
+func windowsAppProcessIdentity(process windows.Handle, pid int, started uint64) (appProcessKey, error) {
 	var creation, exit, kernel, user windows.Filetime
 	if err := windows.GetProcessTimes(process, &creation, &exit, &kernel, &user); err != nil {
 		return appProcessKey{}, err
@@ -128,6 +181,15 @@ func verifyWindowsAppProcess(process windows.Handle, pid int, started uint64, ow
 	key := appProcessKey{PID: pid, Started: uint64(creation.HighDateTime)<<32 | uint64(creation.LowDateTime)}
 	if key.Started == 0 || started != 0 && key.Started != started {
 		return appProcessKey{}, os.ErrProcessDone
+	}
+
+	return key, nil
+}
+
+func verifyWindowsAppProcess(process windows.Handle, pid int, started uint64, owner windowsAppOwner) (appProcessKey, error) {
+	key, err := windowsAppProcessIdentity(process, pid, started)
+	if err != nil {
+		return appProcessKey{}, err
 	}
 
 	var token windows.Token
@@ -315,7 +377,7 @@ func pauseWindowsApp(process windows.Handle, key appProcessKey) error {
 		pause.threads = make(map[uint32]windowsAppThread)
 	}
 	newThreads := make(map[uint32]windowsAppThread)
-	err := suspendWindowsAppThreads(process, uint32(key.PID), pause.threads, newThreads)
+	err := suspendWindowsAppThreads(process, uint32(key.PID), pause.threads, newThreads, pause.complete)
 	if err == nil && len(pause.threads)+len(newThreads) == 0 {
 		err = windowsAppAlive(process)
 		if err == nil {
@@ -337,33 +399,52 @@ func pauseWindowsApp(process windows.Handle, key appProcessKey) error {
 	return err
 }
 
-func suspendWindowsAppThreads(process windows.Handle, pid uint32, owned, added map[uint32]windowsAppThread) error {
+// Called with appPausesMu held. Batching avoids scanning every system thread
+// separately for each renderer/helper of an Electron application.
+func windowsAppThreadIDs(pid uint32, maintenance bool) ([]uint32, error) {
+	if maintenance && appBatchActive && appBatchThreads != nil {
+		return appBatchThreads[pid], nil
+	}
 	snapshot, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPTHREAD, 0)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer windows.CloseHandle(snapshot)
+	threads := make(map[uint32][]uint32)
 	var entry windows.ThreadEntry32
 	entry.Size = uint32(unsafe.Sizeof(entry))
 	for err := windows.Thread32First(snapshot, &entry); ; err = windows.Thread32Next(snapshot, &entry) {
 		if errors.Is(err, windows.ERROR_NO_MORE_FILES) {
-			return nil
+			if maintenance && appBatchActive {
+				appBatchThreads = threads
+			}
+			return threads[pid], nil
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if entry.OwnerProcessID != pid {
-			continue
-		}
-		if thread, ok := owned[entry.ThreadID]; ok {
+		threads[entry.OwnerProcessID] = append(threads[entry.OwnerProcessID], entry.ThreadID)
+	}
+}
+
+func suspendWindowsAppThreads(process windows.Handle, pid uint32, owned, added map[uint32]windowsAppThread, maintenance bool) error {
+	// A first or incomplete pause always gets a fresh snapshot immediately
+	// before suspension. Only maintenance of already-paused processes shares
+	// the batch, so initial child freezes do not use an earlier parent's view.
+	threads, err := windowsAppThreadIDs(pid, maintenance)
+	if err != nil {
+		return err
+	}
+	for _, id := range threads {
+		if thread, ok := owned[id]; ok {
 			if !errors.Is(windowsAppAlive(thread.handle), os.ErrProcessDone) {
 				continue
 			}
 			_ = windows.CloseHandle(thread.handle)
-			delete(owned, entry.ThreadID)
+			delete(owned, id)
 		}
 
-		thread, err := openWindowsAppThread(pid, entry.ThreadID)
+		thread, err := openWindowsAppThread(pid, id)
 		if errors.Is(err, os.ErrProcessDone) {
 			continue
 		}
@@ -385,8 +466,9 @@ func suspendWindowsAppThreads(process windows.Handle, pid uint32, owned, added m
 		}
 		// Record one increment, including when another caller already holds a pause.
 		thread.lease.Count = uint32(count) + 1
-		added[entry.ThreadID] = thread
+		added[id] = thread
 	}
+	return nil
 }
 
 func openWindowsAppThread(pid, id uint32) (windowsAppThread, error) {

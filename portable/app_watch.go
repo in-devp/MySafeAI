@@ -33,14 +33,19 @@ type watchedApp struct {
 }
 
 type watchStatus struct {
-	State     string            `json:"state"`
-	Message   string            `json:"message,omitempty"`
-	Apps      []watchedApp      `json:"apps"`
-	Pending   []pendingApproval `json:"pending"`
-	CheckedAt time.Time         `json:"checkedAt,omitempty"`
+	State            string            `json:"state"`
+	Message          string            `json:"message,omitempty"`
+	Apps             []watchedApp      `json:"apps"`
+	Pending          []pendingApproval `json:"pending"`
+	CheckedAt        time.Time         `json:"checkedAt,omitempty"`
+	BrowserAllowed   bool              `json:"browserAllowed"`
+	BrowserCheckedAt time.Time         `json:"browserCheckedAt,omitempty"`
+	BrowserReason    string            `json:"browserReason,omitempty"`
+	BrowserPolicyKey string            `json:"browserPolicyKey,omitempty"`
 }
 
 type processBackend struct {
+	begin   func() func()
 	list    func() ([]appProcess, error)
 	signal  func(appProcessKey, appProcessAction) error
 	threads func(appProcessKey) []appThreadLease
@@ -52,9 +57,44 @@ type policyProof struct {
 	checked time.Time
 }
 
-type proofBatch struct {
+const (
+	proofRefreshInterval = 5 * time.Second
+	proofMaxAge          = 12 * time.Second
+	localRouteInterval   = 650 * time.Millisecond
+)
+
+type proofJob struct {
+	targets []string
+	next    time.Time
+	busy    bool
+}
+
+type routeJob struct {
+	next time.Time
+	busy bool
+}
+
+type watchCheckResult struct {
 	generation uint64
-	proofs     map[string]policyProof
+	key        string
+	targets    []string
+	proof      *policyProof
+	checked    map[string]time.Time
+	routeOK    bool
+}
+
+// Verification jobs publish independently: a slow PAC or provider must never
+// delay another application's renewed proof or the process-control loop.
+// All mutable scheduler state belongs to the watcher goroutine.
+type watchChecks struct {
+	ctx        context.Context
+	cancel     context.CancelFunc
+	generation uint64
+	proofs     map[string]*proofJob
+	routes     map[string]*routeJob
+	results    chan watchCheckResult
+	verify     func(context.Context, config, string) report
+	route      func(context.Context, config, connectionMode, string) (connectionPath, error)
 }
 
 type pauseRecord struct {
@@ -134,21 +174,26 @@ func (w *appWatch) threadLeases(key appProcessKey) []appThreadLease {
 }
 
 func (w *appWatch) run(ctx context.Context) {
-	tick := time.NewTicker(650 * time.Millisecond)
+	tick := time.NewTicker(localRouteInterval)
 	defer tick.Stop()
 	events := connectionEvents(ctx)
-	batches := make(chan proofBatch, 1)
-	checking := false
-	nextProof := time.Time{}
+	checks := watchChecks{results: make(chan watchCheckResult, 128), verify: verifyTarget, route: findConnectionPath}
+	defer func() {
+		if checks.cancel != nil {
+			checks.cancel()
+		}
+	}()
+	invalidate := func() {
+		w.generation++
+		w.proofs = make(map[string]policyProof)
+	}
 	var previousWall int64
 	var previousSuspension string
 	for {
 		now := time.Now()
 		wall := now.UnixNano()
 		if previousWall != 0 && (wall-previousWall > int64(4*time.Second) || wall < previousWall) {
-			w.generation++
-			w.proofs = make(map[string]policyProof)
-			nextProof = time.Time{}
+			invalidate()
 		}
 		previousWall = wall
 		c, err := w.storage.load()
@@ -157,9 +202,8 @@ func (w *appWatch) run(ctx context.Context) {
 			key = "invalid"
 		}
 		if key != w.policyKey {
-			w.generation++
-			w.policyKey, w.proofs = key, make(map[string]policyProof)
-			nextProof = time.Time{}
+			invalidate()
+			w.policyKey = key
 			if err == nil {
 				w.policy = c
 			}
@@ -169,9 +213,7 @@ func (w *appWatch) run(ctx context.Context) {
 			suspension = c.protectionState(now)
 		}
 		if suspension != previousSuspension {
-			w.generation++
-			w.proofs = make(map[string]policyProof)
-			nextProof = time.Time{}
+			invalidate()
 			if previousSuspension == "suspended" && suspension == "" &&
 				c.ProtectionPausedUntil != nil && err == nil {
 				w.storage.event("Пауза защиты окончена · проверяем подключение")
@@ -179,8 +221,12 @@ func (w *appWatch) run(ctx context.Context) {
 			previousSuspension = suspension
 		}
 		targets := w.policy.activeTargets()
+		if checks.ctx == nil || checks.generation != w.generation {
+			checks.reset(ctx, w.generation, w.policy, targets)
+		}
 		if suspension != "" {
-			status := watchStatus{State: suspension}
+			status := watchStatus{State: suspension, BrowserAllowed: true,
+				BrowserCheckedAt: now, BrowserReason: suspension, BrowserPolicyKey: policyFingerprint(w.policy)}
 			w.releaseAll()
 			if len(w.pauses) != 0 || w.recoveryErr != nil {
 				status.Message = "Не удалось снять паузу с некоторых процессов."
@@ -188,34 +234,46 @@ func (w *appWatch) run(ctx context.Context) {
 			w.status.Store(&status)
 		} else if len(targets) == 0 && err == nil {
 			w.releaseAll()
-			w.status.Store(&watchStatus{State: "off"})
+			w.expireProofs(now)
+			status := watchStatus{State: "off"}
+			w.browserStatus(&status, now, nil)
+			w.status.Store(&status)
+			// Turning off process observation must not turn off an enabled
+			// browser extension's independent global connection verification.
+			if w.policy.BrowserProtection {
+				checks.scheduleProofs(w.policy, now)
+				checks.scheduleRoutes(w.policy, w.proofs, now)
+			}
 		} else {
-			w.validateRoutes(ctx, now)
+			w.expireProofs(now)
 			w.reconcile(ctx, now, targets, err)
-			if err == nil && !checking && !now.Before(nextProof) {
-				checking = true
-				nextProof = now.Add(5 * time.Second)
-				go func(generation uint64, c config, targets []appTarget) {
-					batches <- proofBatch{generation, collectProofs(ctx, c, targets)}
-				}(w.generation, w.policy, targets)
+			if err == nil {
+				checks.scheduleProofs(w.policy, now)
+				checks.scheduleRoutes(w.policy, w.proofs, now)
 			}
 		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-tick.C:
-		case _, open := <-events:
-			if !open {
-				events = nil
-				break
-			}
-			w.generation++
-			w.proofs = make(map[string]policyProof)
-			nextProof = time.Time{}
-		case batch := <-batches:
-			checking = false
-			if batch.generation == w.generation {
-				w.proofs = batch.proofs
+	wait:
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-tick.C:
+				break wait
+			case _, open := <-events:
+				if !open {
+					events = nil
+					continue
+				}
+				invalidate()
+				break wait
+			case result := <-checks.results:
+				if result.generation != w.generation {
+					continue
+				}
+				checks.completed(result)
+				if w.acceptCheck(result, time.Now()) {
+					break wait
+				}
 			}
 		}
 	}
@@ -226,13 +284,14 @@ func policyFingerprint(c config) string {
 	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
 
-func collectProofs(ctx context.Context, c config, targets []appTarget) map[string]policyProof {
-	keys := make(map[string]string, len(targets)+1)
-	completed := make(map[string]policyProof)
-	results := make(chan struct {
-		key   string
-		proof policyProof
-	}, len(targets)+1)
+func (checks *watchChecks) reset(parent context.Context, generation uint64, c config, targets []appTarget) {
+	if checks.cancel != nil {
+		checks.cancel()
+	}
+	checks.ctx, checks.cancel = context.WithCancel(parent)
+	checks.generation = generation
+	checks.proofs = make(map[string]*proofJob)
+	checks.routes = make(map[string]*routeJob)
 	for _, item := range append([]appTarget{{ID: "global"}}, targets...) {
 		effective, rule := c.forTarget(item.ID)
 		key := item.ID
@@ -240,53 +299,159 @@ func collectProofs(ctx context.Context, c config, targets []appTarget) map[strin
 			effective.Rules = nil
 			key = string(rule.Mode) + policyFingerprint(effective)
 		}
-		keys[item.ID] = key
-		if _, ok := completed[key]; ok {
-			continue
+		job := checks.proofs[key]
+		if job == nil {
+			job = &proofJob{}
+			checks.proofs[key] = job
 		}
-		completed[key] = policyProof{}
-		go func() {
-			report := verifyTarget(ctx, c, item.ID)
-			results <- struct {
-				key   string
-				proof policyProof
-			}{key, policyProof{report, time.Now()}}
-		}()
+		job.targets = append(job.targets, item.ID)
 	}
-	for range completed {
-		result := <-results
-		completed[result.key] = result.proof
-	}
-	proofs := make(map[string]policyProof, len(keys))
-	for id, key := range keys {
-		proofs[id] = completed[key]
-	}
-	return proofs
 }
 
-func (w *appWatch) validateRoutes(ctx context.Context, now time.Time) {
-	ctx, cancel := context.WithTimeout(ctx, 1100*time.Millisecond)
-	defer cancel()
-	valid := make(map[string]bool)
-	for id, proof := range w.proofs {
+func (checks *watchChecks) scheduleProofs(c config, now time.Time) {
+	for key, job := range checks.proofs {
+		if job.busy || now.Before(job.next) {
+			continue
+		}
+		job.busy, job.next = true, now.Add(proofRefreshInterval)
+		ctx, generation, targets := checks.ctx, checks.generation, job.targets
+		go func() {
+			r := checks.verify(ctx, c, targets[0])
+			result := watchCheckResult{generation: generation, key: key, targets: targets,
+				proof: &policyProof{report: r, checked: time.Now()}}
+			select {
+			case checks.results <- result:
+			case <-ctx.Done():
+			}
+		}()
+	}
+}
+
+func (checks *watchChecks) scheduleRoutes(c config, proofs map[string]policyProof, now time.Time) {
+	groups := make(map[string]map[string]time.Time)
+	for id, proof := range proofs {
 		if proof.routeKey == "" {
 			continue
 		}
-		ok, known := valid[proof.routeKey]
-		if !known {
-			c, rule := w.policy.forTarget(id)
-			path, err := findConnectionPath(ctx, c, rule.Mode, id)
-			ok = err == nil && path.key == proof.routeKey
-			valid[proof.routeKey] = ok
+		if groups[proof.routeKey] == nil {
+			groups[proof.routeKey] = make(map[string]time.Time)
 		}
-		if !ok || now.Sub(proof.checked) > 12*time.Second {
+		groups[proof.routeKey][id] = proof.checked
+	}
+	for key := range checks.routes {
+		if _, exists := groups[key]; !exists && !checks.routes[key].busy {
+			delete(checks.routes, key)
+		}
+	}
+	for key, checked := range groups {
+		job := checks.routes[key]
+		if job == nil {
+			job = &routeJob{}
+			checks.routes[key] = job
+		}
+		if job.busy || now.Before(job.next) {
+			continue
+		}
+		var target string
+		for id := range checked {
+			target = id
+			break
+		}
+		effective, rule := c.forTarget(target)
+		interval, timeout := localRouteInterval, 1100*time.Millisecond
+		if rule.Mode == systemProxy || rule.Mode == serviceTunnel {
+			// PAC and service DNS are network operations. Do not repeat them
+			// at process-scan frequency or share their deadline with other apps.
+			interval, timeout = proofRefreshInterval, 5*time.Second
+		}
+		job.busy, job.next = true, now.Add(interval)
+		generationCtx, generation := checks.ctx, checks.generation
+		go func() {
+			ctx, cancel := context.WithTimeout(generationCtx, timeout)
+			defer cancel()
+			path, err := checks.route(ctx, effective, rule.Mode, target)
+			result := watchCheckResult{generation: generation, key: key, checked: checked,
+				routeOK: err == nil && ctx.Err() == nil && path.key == key}
+			// Deadline expiry must publish a failed check. Only cancellation
+			// of this generation permits discarding the result.
+			select {
+			case checks.results <- result:
+			case <-generationCtx.Done():
+			}
+		}()
+	}
+}
+
+func (checks *watchChecks) completed(result watchCheckResult) {
+	if result.generation != checks.generation {
+		return
+	}
+	if result.proof != nil {
+		if job := checks.proofs[result.key]; job != nil {
+			job.busy = false
+		}
+	} else if job := checks.routes[result.key]; job != nil {
+		job.busy = false
+	}
+}
+
+func (w *appWatch) acceptCheck(result watchCheckResult, now time.Time) bool {
+	if result.generation != w.generation {
+		return false
+	}
+	if result.proof != nil {
+		if now.Before(result.proof.checked) || now.Sub(result.proof.checked) > proofMaxAge {
+			return false
+		}
+		for _, id := range result.targets {
+			w.proofs[id] = *result.proof
+		}
+		return true
+	}
+	changed := false
+	if !result.routeOK {
+		for id, checked := range result.checked {
+			proof, present := w.proofs[id]
+			if present && proof.routeKey == result.key && proof.checked.Equal(checked) {
+				delete(w.proofs, id)
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+
+func (w *appWatch) expireProofs(now time.Time) {
+	for id, proof := range w.proofs {
+		if now.Before(proof.checked) || now.Sub(proof.checked) > proofMaxAge {
 			delete(w.proofs, id)
 		}
 	}
 }
 
+func (w *appWatch) browserStatus(status *watchStatus, now time.Time, configErr error) {
+	status.BrowserAllowed = false
+	status.BrowserPolicyKey = policyFingerprint(w.policy)
+	proof := w.proofs["global"]
+	status.BrowserCheckedAt = proof.checked
+	status.BrowserReason = proof.Reason
+	if configErr != nil {
+		status.BrowserReason = "Не удалось прочитать правила защиты."
+		return
+	}
+	if proof.checked.IsZero() || now.Before(proof.checked) || now.Sub(proof.checked) > proofMaxAge {
+		status.BrowserReason = "Проверяем подключение."
+		return
+	}
+	status.BrowserAllowed = proof.Trusted
+}
+
 func (w *appWatch) reconcile(ctx context.Context, now time.Time, targets []appTarget, configErr error) {
+	if w.backend.begin != nil {
+		defer w.backend.begin()()
+	}
 	status := watchStatus{State: "checking"}
+	w.browserStatus(&status, now, configErr)
 	if configErr != nil {
 		status.State, status.Message = "failed", "Не удалось прочитать правила защиты."
 	} else if w.recoveryErr != nil {
@@ -383,9 +548,9 @@ func (w *appWatch) reconcile(ctx context.Context, now time.Time, targets []appTa
 		}
 	}
 	if w.policy.Notifications && wasPaused != (len(w.pauses) != 0) {
-		message := "Доверенное подключение восстановлено."
+		message := nativeText("Доверенное подключение восстановлено.", "Trusted connection restored.")
 		if len(w.pauses) > 0 {
-			message = "Приложения приостановлены до проверки подключения."
+			message = nativeText("Приложения приостановлены до проверки подключения.", "Applications paused until the connection is verified.")
 		}
 		go func() { _ = notifyProtection(ctx, "MySafeAI", message) }()
 	}
@@ -397,10 +562,17 @@ func (w *appWatch) targetsTrusted(targets []string) bool {
 }
 
 func (w *appWatch) includeDetached(current []watchedProcess, processes []appProcess, targets []appTarget) []watchedProcess {
+	byPID := make(map[int]appProcess, len(processes))
+	for _, process := range processes {
+		if process.Key.PID > 1 && process.Key.Started != 0 {
+			byPID[process.Key.PID] = process
+		}
+	}
 	active := make(map[appProcessKey]bool, len(current))
 	for _, item := range current {
 		active[item.Key] = true
 	}
+	explicitVPN := explicitVPNTargetIDs(targets)
 	enabled := make(map[string]bool, len(targets))
 	for _, target := range targets {
 		enabled[target.ID] = true
@@ -410,8 +582,14 @@ func (w *appWatch) includeDetached(current []watchedProcess, processes []appProc
 		if !known || active[process.Key] {
 			continue
 		}
+		// Old versions could record an IDE-inherited pause on its VPN child.
+		// Do not restore that rule while the VPN boundary is recognizable.
+		// Explicit matches already appear in current and are preserved above.
+		behindVPN := behindInheritedProtectionBoundary(process, byPID)
 		previous.appProcess = process
-		previous.targets = slices.DeleteFunc(append([]string(nil), previous.targets...), func(id string) bool { return !enabled[id] })
+		previous.targets = slices.DeleteFunc(append([]string(nil), previous.targets...), func(id string) bool {
+			return !enabled[id] || (behindVPN && !explicitVPN[id])
+		})
 		if len(previous.targets) != 0 {
 			current = append(current, previous)
 		}

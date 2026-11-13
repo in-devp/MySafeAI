@@ -1,0 +1,8 @@
+{
+  "extensionName": {
+    "message": "MySafeAI — site protection"
+  },
+  "extensionDescription": {
+    "message": "Pauses selected AI sites and your custom domains when the local MySafeAI app cannot confirm a trusted connection."
+  }
+}

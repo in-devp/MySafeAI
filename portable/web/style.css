@@ -74,6 +74,7 @@ li { border-top: 1px solid #353640; padding: 5px 0; overflow-wrap: anywhere; }
 #journal { font-size: 12px; color: #cdced7; }
 #notice { color: #ffca8c; overflow-wrap: anywhere; }
 .hint { font-size: 12px; color: #b9bac8; margin-top: 5px; }
+.language-hint { margin-bottom: 18px; }
 .approval-ip { color: #ffca8c; font-size: 21px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 #approval-card { border-color: #705c43; background: #29251f; }
 .settings-group { border-top: 1px solid #383947; margin-top: 14px; padding-top: 12px; }

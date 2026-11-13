@@ -96,11 +96,17 @@ func decode(w http.ResponseWriter, r *http.Request, data any) error {
 }
 
 func (p *panel) serve(w http.ResponseWriter, r *http.Request, path string) {
+	if p.serveLanguage(w, r, path) {
+		return
+	}
+	if p.serveBrowser(w, r, path) {
+		return
+	}
 	if p.servePolicy(w, r, path) {
 		return
 	}
 	switch r.Method + " " + path {
-	case "GET ", "GET style.css", "GET panel.js", "GET icon.svg":
+	case "GET ", "GET style.css", "GET panel.js", "GET i18n.js", "GET locales.json", "GET icon.svg":
 		name := path
 		if name == "" {
 			name = "index.html"
@@ -111,10 +117,12 @@ func (p *panel) serve(w http.ResponseWriter, r *http.Request, path string) {
 			return
 		}
 		contentTypes := map[string]string{
-			"index.html": "text/html; charset=utf-8",
-			"panel.js":   "text/javascript; charset=utf-8",
-			"style.css":  "text/css; charset=utf-8",
-			"icon.svg":   "image/svg+xml",
+			"index.html":   "text/html; charset=utf-8",
+			"panel.js":     "text/javascript; charset=utf-8",
+			"i18n.js":      "text/javascript; charset=utf-8",
+			"locales.json": "application/json; charset=utf-8",
+			"style.css":    "text/css; charset=utf-8",
+			"icon.svg":     "image/svg+xml",
 		}
 		w.Header().Set("Content-Type", contentTypes[name])
 		_, _ = w.Write(data)
@@ -150,6 +158,7 @@ func (p *panel) serve(w http.ResponseWriter, r *http.Request, path string) {
 			"token": p.token, "smoke": p.smoke, "trayOnly": trayOnly && tray, "trayAvailable": tray, "canPick": p.pick != nil,
 			"watch": watch, "targets": append(append([]appTarget(nil), builtInTargets...), c.CustomTargets...),
 			"login": login, "sources": sourceNames(),
+			"language": p.storage.loadLanguage(),
 		})
 	case "POST api/window-mode":
 		var preferences windowPreferences

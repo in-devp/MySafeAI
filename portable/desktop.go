@@ -42,7 +42,7 @@ func runDesktop(parent context.Context, s storage, smoke bool) error {
 
 	options := application.Options{
 		Name:        "MySafeAI",
-		Description: "Монитор маршрутов и VPN-защита",
+		Description: nativeText("Монитор маршрутов и VPN-защита", "Network monitoring and application protection"),
 		Icon:        icon,
 		Assets:      application.AssetOptions{DisableLogging: true, Handler: ui.handler()},
 		OnShutdown: func() {
@@ -117,7 +117,7 @@ func runDesktop(parent context.Context, s storage, smoke bool) error {
 
 	ui.pick = func() (string, error) {
 		dialog := app.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
-			Title: "Выбрать программу", CanChooseFiles: true, AllowsOtherFileTypes: true, Window: window,
+			Title: nativeText("Выбрать программу", "Choose an application"), CanChooseFiles: true, AllowsOtherFileTypes: true, Window: window,
 		})
 		return dialog.PromptForSingleSelection()
 	}
@@ -126,10 +126,10 @@ func runDesktop(parent context.Context, s storage, smoke bool) error {
 	tray.SetTooltip("MySafeAI")
 	tray.OnClick(func() { application.InvokeAsync(show) })
 	menu := app.Menu.New()
-	menu.Add("Открыть MySafeAI").OnClick(func(*application.Context) { application.InvokeAsync(show) })
-	menu.Add("Скрыть окно").OnClick(func(*application.Context) { application.InvokeAsync(hide) })
+	openItem := menu.Add(nativeText("Открыть MySafeAI", "Open MySafeAI")).OnClick(func(*application.Context) { application.InvokeAsync(show) })
+	hideItem := menu.Add(nativeText("Скрыть окно", "Hide window")).OnClick(func(*application.Context) { application.InvokeAsync(hide) })
 	menu.AddSeparator()
-	menu.Add("Выйти").OnClick(func(*application.Context) { app.Quit() })
+	quitItem := menu.Add(nativeText("Выйти", "Quit")).OnClick(func(*application.Context) { app.Quit() })
 	tray.SetMenu(menu)
 	window.RegisterHook(events.Common.WindowClosing, func(event *application.WindowEvent) {
 		if trayAvailable() {
@@ -152,6 +152,7 @@ func runDesktop(parent context.Context, s storage, smoke bool) error {
 	go func() {
 		ticker := time.NewTicker(2 * time.Second)
 		defer ticker.Stop()
+		lastLanguage := userLanguage()
 		for {
 			select {
 			case <-parent.Done():
@@ -160,6 +161,14 @@ func runDesktop(parent context.Context, s storage, smoke bool) error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				if language := userLanguage(); language != lastLanguage {
+					lastLanguage = language
+					application.InvokeAsync(func() {
+						openItem.SetLabel(nativeText("Открыть MySafeAI", "Open MySafeAI"))
+						hideItem.SetLabel(nativeText("Скрыть окно", "Hide window"))
+						quitItem.SetLabel(nativeText("Выйти", "Quit"))
+					})
+				}
 				if hiddenToTray.Load() && !trayAvailable() {
 					application.InvokeAsync(show)
 				}

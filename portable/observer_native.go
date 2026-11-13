@@ -2,6 +2,8 @@
 
 package main
 
+var beginAppProcessBatch func() func()
+
 func nativeProcessBackend() processBackend {
-	return processBackend{list: listAppProcesses, signal: controlAppProcess, threads: appThreadLeases, adopt: adoptAppThreadLeases}
+	return processBackend{begin: beginAppProcessBatch, list: listAppProcesses, signal: controlAppProcess, threads: appThreadLeases, adopt: adoptAppThreadLeases}
 }

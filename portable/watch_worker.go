@@ -68,6 +68,7 @@ func runWatchWorker(parent context.Context, s storage) error {
 	defer func() {
 		cancel()
 		<-done
+		_ = os.Remove(filepath.Join(s.dir, "browser-state.json"))
 		if cleanExit {
 			watch.releaseAll()
 			if len(watch.pauses) != 0 {
@@ -102,6 +103,7 @@ func runWatchWorker(parent context.Context, s storage) error {
 			}
 		}
 		status := *watch.status.Load()
+		s.publishBrowser(status, now)
 		status.Pending = append([]pendingApproval(nil), status.Pending...)
 		for _, item := range s.pendingPreflights(now) {
 			if !slices.ContainsFunc(status.Pending, func(existing pendingApproval) bool { return existing.ID == item.ID }) {

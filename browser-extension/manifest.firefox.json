@@ -1,0 +1,68 @@
+{
+  "manifest_version": 3,
+  "name": "__MSG_extensionName__",
+  "version": "0.4.0",
+  "description": "__MSG_extensionDescription__",
+  "permissions": [
+    "nativeMessaging",
+    "declarativeNetRequest",
+    "storage",
+    "alarms",
+    "tabs"
+  ],
+  "host_permissions": [
+    "*://*.chatgpt.com/*",
+    "*://*.openai.com/*",
+    "*://*.claude.ai/*",
+    "*://*.anthropic.com/*",
+    "*://*.cursor.com/*",
+    "*://*.cursor.sh/*",
+    "*://*.gemini.google.com/*",
+    "*://*.aistudio.google.com/*"
+  ],
+  "background": {
+    "scripts": [
+      "policy.js",
+      "i18n.js",
+      "controller.js",
+      "background.js"
+    ]
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "MySafeAI",
+    "default_icon": {
+      "48": "icon.png"
+    }
+  },
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "protected_sites",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  },
+  "content_security_policy": {
+    "extension_pages": "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "mysafeai@in-devp",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
+    },
+    "gecko_android": {
+      "strict_min_version": "142.0"
+    }
+  },
+  "icons": {
+    "48": "icon.png"
+  },
+  "default_locale": "en"
+}

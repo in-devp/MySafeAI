@@ -1,3 +1,4 @@
+import NetworkDiagnostics
 import Foundation
 import Observation
 import ServiceManagement
@@ -9,7 +10,8 @@ final class BackgroundOptions {
     private static let notificationsKey = "showsProtectionNotifications"
     private(set) var loginStatus = SMAppService.mainApp.status
     private(set) var notifications = UserDefaults.standard.bool(forKey: notificationsKey)
-    private(set) var message: String?
+    private var messageValue: L10n.Value?
+    var message: String? { messageValue.map { L10n.text($0) } }
     @ObservationIgnored private var lastStatus: ProtectionController.Status?
     @ObservationIgnored private var notificationRequest = UUID()
 
@@ -18,12 +20,12 @@ final class BackgroundOptions {
     }
 
     func setLaunchAtLogin(_ enabled: Bool) {
-        message = nil
+        messageValue = nil
         do {
             if enabled { try SMAppService.mainApp.register() }
             else { try SMAppService.mainApp.unregister() }
         } catch {
-            message = "macOS не применила настройку. Проверьте объекты входа в системных настройках."
+            messageValue = "macOS не применила настройку. Проверьте объекты входа в системных настройках."
         }
         refresh()
     }
@@ -33,7 +35,7 @@ final class BackgroundOptions {
     func setNotifications(_ enabled: Bool) {
         let request = UUID()
         notificationRequest = request
-        message = nil
+        messageValue = nil
         if !enabled {
             notifications = false
             UserDefaults.standard.set(false, forKey: Self.notificationsKey)
@@ -45,10 +47,10 @@ final class BackgroundOptions {
                 guard notificationRequest == request else { return }
                 notifications = granted
                 UserDefaults.standard.set(granted, forKey: Self.notificationsKey)
-                if !granted { message = "Разрешите уведомления MySafeAI в системных настройках." }
+                if !granted { messageValue = "Разрешите уведомления MySafeAI в системных настройках." }
             } catch {
                 guard notificationRequest == request else { return }
-                message = "Не удалось включить системные уведомления."
+                messageValue = "Не удалось включить системные уведомления."
             }
         }
     }
@@ -62,15 +64,15 @@ final class BackgroundOptions {
         let content = UNMutableNotificationContent()
         switch status {
         case .paused:
-            content.title = "Приложения на паузе"
+            content.title = L10n.text("Приложения на паузе")
             content.body = "\(paused.joined(separator: ", ")). \(status.title)."
         case .trusted:
             guard let previous, case .paused = previous else { return }
-            content.title = "Доверенный маршрут восстановлен"
-            content.body = "MySafeAI возобновил разрешённые приложения."
+            content.title = L10n.text("Доверенный маршрут восстановлен")
+            content.body = L10n.text("MySafeAI возобновил разрешённые приложения.")
         case .failed:
-            content.title = "Ошибка защиты"
-            content.body = "Откройте MySafeAI, чтобы восстановить контроль."
+            content.title = L10n.text("Ошибка защиты")
+            content.body = L10n.text("Откройте MySafeAI, чтобы восстановить контроль.")
         default:
             return
         }

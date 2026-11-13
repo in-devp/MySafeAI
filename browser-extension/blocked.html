@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MySafeAI</title><link rel="stylesheet" href="ui.css"><script src="i18n.js" defer></script><script src="blocked.js" defer></script></head>
+<body class="blocked"><main class="pause-card">
+<header class="brand"><img src="icon.png" width="26" height="26" alt="">MySafeAI <span class="eyebrow" data-text="protection">Site protection</span></header>
+<div class="pause-symbol" aria-hidden="true">Ⅱ</div><h1 data-text="pausedHeading">This site is paused</h1><p id="site" class="site"></p><p data-text="pausedDetail">The connection changed or has not been verified yet. MySafeAI stopped this selected site from loading. Other tabs remain available.</p>
+<section id="status-card" class="status" aria-live="polite"><div class="status-line"><span class="dot" aria-hidden="true"></span><span id="status">Waiting for confirmation</span></div><p id="reason">Open MySafeAI and approve the current connection.</p></section>
+<div class="actions"><button id="restore" class="primary" disabled data-text="restore">Return to site</button><button id="retry" data-text="retry">Check connection</button></div><p id="error" class="error" role="alert" hidden></p>
+<p class="note" data-text="pausedNote">The site only reopens when you click. Moving to this page closes this tab’s connections; unsaved input may have been lost.</p>
+<a class="small-link" href="https://github.com/in-devp/MySafeAI/blob/main/docs/browser-extension.md" target="_blank" rel="noreferrer" data-text="configure">Set up the extension ↗</a>
+<div class="language-row"><label for="language" data-text="language">Language</label><select id="language"><option value="system" data-text="system">System</option><option value="ru">Русский</option><option value="en">English</option></select></div>
+</main></body></html>

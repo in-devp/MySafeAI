@@ -16,12 +16,16 @@ public struct SystemProxyConfiguration: Equatable, Sendable {
         guard let settings = CFNetworkCopySystemProxySettings()?.takeRetainedValue() as? [String: Any] else {
             return Self(modes: [])
         }
+        return parse(settings: settings)
+    }
+
+    static func parse(settings: [String: Any]) -> Self {
         let entries = [
             ("HTTPEnable", "HTTP"),
             ("HTTPSEnable", "HTTPS"),
             ("SOCKSEnable", "SOCKS"),
             ("ProxyAutoConfigEnable", "PAC"),
-            ("ProxyAutoDiscoveryEnable", "Автонастройка")
+            ("ProxyAutoDiscoveryEnable", "WPAD")
         ]
         let enabled = entries.filter { (settings[$0.0] as? NSNumber)?.boolValue == true }
         let fingerprint = JSONSerialization.isValidJSONObject(settings)
@@ -141,25 +145,25 @@ public struct LeakCheckReport: Sendable {
     public var hasWarnings: Bool { findings.contains { $0.level == .warning } }
     public var hasUnknowns: Bool { findings.contains { $0.level == .unknown } }
     public var summary: String {
-        if hasWarnings { return "Есть риски утечки" }
-        if hasUnknowns { return "Часть проверок не завершена" }
-        return "Проверки завершены"
+        if hasWarnings { return L10n.text("Есть риски утечки") }
+        if hasUnknowns { return L10n.text("Часть проверок не завершена") }
+        return L10n.text("Проверки завершены")
     }
 
     private var directFinding: LeakFinding {
         let summary = AddressCheckSummary(direct)
         guard let address = summary.confirmedIPv4 else {
-            return .init(id: "direct", title: "Прямой IPv4 · CLI", value: "IP не подтверждён",
-                         detail: "Нужны совпавшие ответы двух источников. Проверьте их доступность в настройках.",
+            return .init(id: "direct", title: L10n.text("Прямой IPv4 · CLI"), value: L10n.text("IP не подтверждён"),
+                         detail: L10n.text("Нужны совпавшие ответы двух источников. Проверьте их доступность в настройках."),
                          level: summary.hasDisagreement ? .warning : .unknown)
         }
         if case .tunnel(let interface) = snapshot.ipv4 {
-            return .init(id: "direct", title: "Прямой IPv4 · CLI", value: address,
-                         detail: "Два источника подтвердили IP. Основной маршрут идёт через \(interface).",
+            return .init(id: "direct", title: L10n.text("Прямой IPv4 · CLI"), value: address,
+                         detail: L10n.text("Два источника подтвердили IP. Основной маршрут идёт через \(interface)."),
                          level: .good)
         }
-        return .init(id: "direct", title: "Прямой IPv4 · CLI", value: address,
-                     detail: "Туннельный маршрут не подтверждён. Включите TUN или VPN для всего устройства.",
+        return .init(id: "direct", title: L10n.text("Прямой IPv4 · CLI"), value: address,
+                     detail: L10n.text("Туннельный маршрут не подтверждён. Включите TUN или VPN для всего устройства."),
                      level: .warning)
     }
 
@@ -168,21 +172,21 @@ public struct LeakCheckReport: Sendable {
         let summary = AddressCheckSummary(system)
         let usedProxy = system.contains { $0.usedProxy == true }
         guard let address = summary.confirmedIPv4 else {
-            return .init(id: "proxy", title: "Системный путь", value: "IP не подтверждён",
-                         detail: "Системное подключение должно получить совпавшие ответы двух источников.",
+            return .init(id: "proxy", title: L10n.text("Системный путь"), value: L10n.text("IP не подтверждён"),
+                         detail: L10n.text("Системное подключение должно получить совпавшие ответы двух источников."),
                          level: summary.hasDisagreement ? .warning : .unknown)
         }
         if let directIP, address != directIP {
-            return .init(id: "proxy", title: "Системный путь", value: address,
+            return .init(id: "proxy", title: L10n.text("Системный путь"), value: address,
                          detail: usedProxy
-                            ? "Прокси и прямой выход CLI показывают разные IP. Включите TUN или перенаправление всего трафика в VPN-клиенте."
-                            : "Системное и прямое подключения показывают разные IP. Проверьте прокси и раздельную маршрутизацию.",
+                            ? L10n.text("Прокси и прямой выход CLI показывают разные IP. Включите TUN или перенаправление всего трафика в VPN-клиенте.")
+                            : L10n.text("Системное и прямое подключения показывают разные IP. Проверьте прокси и раздельную маршрутизацию."),
                          level: .warning)
         }
         if usedProxy {
-            return .init(id: "proxy", title: "Системный путь · прокси", value: address,
-                         detail: directIP == nil ? "Прокси работает, прямой выход CLI ещё не подтверждён."
-                            : "Запросы действительно использовали прокси. IP совпал с прямым выходом CLI.",
+            return .init(id: "proxy", title: L10n.text("Системный путь · прокси"), value: address,
+                         detail: directIP == nil ? L10n.text("Прокси работает, прямой выход CLI ещё не подтверждён.")
+                            : L10n.text("Запросы действительно использовали прокси. IP совпал с прямым выходом CLI."),
                          level: directIP == nil ? .unknown : .good)
         }
         let successful = system.filter {
@@ -190,59 +194,59 @@ public struct LeakCheckReport: Sendable {
             return false
         }
         let knownDirect = successful.allSatisfy { $0.usedProxy == false }
-        return .init(id: "proxy", title: "Системный путь", value: address,
+        return .init(id: "proxy", title: L10n.text("Системный путь"), value: address,
                      detail: knownDirect
-                        ? proxy.isEnabled ? "Для тестовых адресов система выбрала подключение без прокси."
-                            : "Тестовые запросы прошли без прокси. Проверяется обычный системный выход."
-                        : "Метрики использования прокси не получены. Путь запроса требует проверки.",
+                        ? proxy.isEnabled ? L10n.text("Для тестовых адресов система выбрала подключение без прокси.")
+                            : L10n.text("Тестовые запросы прошли без прокси. Проверяется обычный системный выход.")
+                        : L10n.text("Метрики использования прокси не получены. Путь запроса требует проверки."),
                      level: knownDirect ? .info : .unknown)
     }
 
     private var ipv6Finding: LeakFinding {
         let summary = AddressCheckSummary(ipv6)
         if summary.hasDisagreement {
-            return .init(id: "ipv6", title: "IPv6", value: "Источники видят разные IP",
-                         detail: "Проверьте маршрутизацию IPv6 в VPN-клиенте.", level: .warning)
+            return .init(id: "ipv6", title: "IPv6", value: L10n.text("Источники видят разные IP"),
+                         detail: L10n.text("Проверьте маршрутизацию IPv6 в VPN-клиенте."), level: .warning)
         }
         if let address = summary.ipv6.first {
             let sameTunnel = snapshot.ipv6 == snapshot.ipv4
             if case .tunnel = snapshot.ipv6, sameTunnel, summary.confirmedIPv6 != nil {
                 return .init(id: "ipv6", title: "IPv6", value: address,
-                             detail: "Два источника подтвердили IPv6. Основной маршрут использует тот же туннель, что IPv4.",
+                             detail: L10n.text("Два источника подтвердили IPv6. Основной маршрут использует тот же туннель, что IPv4."),
                              level: .good)
             }
             return .init(id: "ipv6", title: "IPv6", value: address,
-                         detail: sameTunnel ? "Ответил один источник. Нужна независимая проверка IPv6."
-                            : "IPv6 доступен, его путь через основной VPN-туннель не подтверждён.",
+                         detail: sameTunnel ? L10n.text("Ответил один источник. Нужна независимая проверка IPv6.")
+                            : L10n.text("IPv6 доступен, его путь через основной VPN-туннель не подтверждён."),
                          level: sameTunnel ? .unknown : .warning)
         }
         if snapshot.ipv6 == .missing && ipv6.count >= 2 {
-            return .init(id: "ipv6", title: "IPv6", value: "Прямой IPv6 недоступен",
-                         detail: "Маршрут отсутствует, обе HTTPS-проверки IPv6 не получили адрес.", level: .info)
+            return .init(id: "ipv6", title: "IPv6", value: L10n.text("Прямой IPv6 недоступен"),
+                         detail: L10n.text("Маршрут отсутствует, обе HTTPS-проверки IPv6 не получили адрес."), level: .info)
         }
-        return .init(id: "ipv6", title: "IPv6", value: "Выход не подтверждён",
-                     detail: "Проверьте, что VPN обслуживает IPv6 или блокирует его.",
+        return .init(id: "ipv6", title: "IPv6", value: L10n.text("Выход не подтверждён"),
+                     detail: L10n.text("Проверьте, что VPN обслуживает IPv6 или блокирует его."),
                      level: snapshot.ipv6.interface != nil && snapshot.ipv6 != snapshot.ipv4 ? .warning : .unknown)
     }
 
     private var dnsRouteFinding: LeakFinding {
         switch snapshot.dnsRoute {
         case .viaTunnel:
-            .init(id: "dnsRoute", title: "Маршруты DNS", value: "Через туннель",
-                  detail: "Основные DNS-серверы доступны через VPN-интерфейс.", level: .good)
+            .init(id: "dnsRoute", title: L10n.text("Маршруты DNS"), value: L10n.text("Через туннель"),
+                  detail: L10n.text("Основные DNS-серверы доступны через VPN-интерфейс."), level: .good)
         case .outsideTunnel:
-            .init(id: "dnsRoute", title: "Маршруты DNS", value: "Есть путь вне VPN",
-                  detail: "Включите DNS через туннель в VPN-клиенте. MySafeAI может ставить приложения на паузу при таком маршруте.",
+            .init(id: "dnsRoute", title: L10n.text("Маршруты DNS"), value: L10n.text("Есть путь вне VPN"),
+                  detail: L10n.text("Включите DNS через туннель в VPN-клиенте. MySafeAI может ставить приложения на паузу при таком маршруте."),
                   level: .warning)
         case .viaDirect:
-            .init(id: "dnsRoute", title: "Маршруты DNS", value: "Через текущую сеть",
-                  detail: "Основные DNS-серверы доступны через интерфейс прямого подключения.", level: .good)
+            .init(id: "dnsRoute", title: L10n.text("Маршруты DNS"), value: L10n.text("Через текущую сеть"),
+                  detail: L10n.text("Основные DNS-серверы доступны через интерфейс прямого подключения."), level: .good)
         case .outsideDirect:
-            .init(id: "dnsRoute", title: "Маршруты DNS", value: "Через другую сеть",
-                  detail: "Часть основных DNS-серверов доступна через другой сетевой интерфейс.", level: .warning)
+            .init(id: "dnsRoute", title: L10n.text("Маршруты DNS"), value: L10n.text("Через другую сеть"),
+                  detail: L10n.text("Часть основных DNS-серверов доступна через другой сетевой интерфейс."), level: .warning)
         case .unknown:
-            .init(id: "dnsRoute", title: "Маршруты DNS", value: "Путь не определён",
-                  detail: "Локальный DNS-прокси может пересылать запросы дальше. Его следующий сетевой участок требует отдельной проверки.",
+            .init(id: "dnsRoute", title: L10n.text("Маршруты DNS"), value: L10n.text("Путь не определён"),
+                  detail: L10n.text("Локальный DNS-прокси может пересылать запросы дальше. Его следующий сетевой участок требует отдельной проверки."),
                   level: .unknown)
         }
     }
@@ -250,15 +254,15 @@ public struct LeakCheckReport: Sendable {
     private var dnsObserverFinding: LeakFinding {
         switch dns {
         case .disabled:
-            return .init(id: "dnsObserver", title: "Наблюдаемые DNS", value: "Внешний тест выключен",
-                         detail: "Включается в настройках. Сервис увидит IP устройства и адреса резолверов.", level: .info)
+            return .init(id: "dnsObserver", title: L10n.text("Наблюдаемые DNS"), value: L10n.text("Внешний тест выключен"),
+                         detail: L10n.text("Включается в настройках. Сервис увидит IP устройства и адреса резолверов."), level: .info)
         case .unavailable:
-            return .init(id: "dnsObserver", title: "Наблюдаемые DNS", value: "Резолверы не подтверждены",
-                         detail: "bash.ws не вернул список резолверов. Можно повторить внешний тест.", level: .unknown)
+            return .init(id: "dnsObserver", title: L10n.text("Наблюдаемые DNS"), value: L10n.text("Резолверы не подтверждены"),
+                         detail: L10n.text("bash.ws не вернул список резолверов. Можно повторить внешний тест."), level: .unknown)
         case .observed(let resolvers):
             let labels = Set(resolvers.map(\.label)).sorted().joined(separator: ", ")
-            return .init(id: "dnsObserver", title: "Наблюдаемые DNS", value: labels,
-                         detail: "bash.ws увидел эти резолверы при тесте. Сверьте их с DNS-настройками VPN.", level: .info)
+            return .init(id: "dnsObserver", title: L10n.text("Наблюдаемые DNS"), value: labels,
+                         detail: L10n.text("bash.ws увидел эти резолверы при тесте. Сверьте их с DNS-настройками VPN."), level: .info)
         }
     }
 }

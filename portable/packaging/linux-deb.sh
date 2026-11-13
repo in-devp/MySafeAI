@@ -13,7 +13,7 @@ mkdir -p "$root/DEBIAN" "$root/usr/bin" "$root/usr/share/applications"     "$roo
 arch=$(dpkg --print-architecture)
 cat > "$root/DEBIAN/control" <<CONTROL
 Package: mysafeai
-Version: 0.3.1
+Version: 0.4.0
 Architecture: $arch
 Maintainer: MySafeAI contributors <36034823+in-devp@users.noreply.github.com>
 Section: net
@@ -25,6 +25,7 @@ Description: Local process protection for VPN and direct connections
  connection is approved.
 CONTROL
 install -m 755 "$1" "$root/usr/bin/mysafeai"
+install -m 755 "$(dirname "$1")/mysafeai-browser-host" "$root/usr/bin/mysafeai-browser-host"
 install -m 644 packaging/app.mysafeai.desktop.desktop "$root/usr/share/applications/"
 install -m 644 web/tray.png "$root/usr/share/icons/hicolor/48x48/apps/app.mysafeai.desktop.png"
 install -m 644 ../LICENSE "$root/usr/share/doc/mysafeai/copyright"

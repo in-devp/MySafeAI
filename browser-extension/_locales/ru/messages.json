@@ -1,0 +1,8 @@
+{
+  "extensionName": {
+    "message": "MySafeAI — защита сайтов"
+  },
+  "extensionDescription": {
+    "message": "Ставит выбранные AI-сайты и свои домены на паузу, если локальное приложение MySafeAI не подтверждает подключение."
+  }
+}

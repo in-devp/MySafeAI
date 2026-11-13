@@ -26,6 +26,7 @@ type config struct {
 	BlockOutsideDNS       bool                         `json:"blockOutsideDNS,omitempty"`
 	ObserveDNS            bool                         `json:"observeDNS,omitempty"`
 	Notifications         bool                         `json:"notifications,omitempty"`
+	BrowserProtection     bool                         `json:"browserProtection,omitempty"`
 	ProtectionDisabled    bool                         `json:"protectionDisabled,omitempty"`
 	ProtectionPausedUntil *time.Time                   `json:"protectionPausedUntil,omitempty"`
 }

@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MySafeAI</title><link rel="stylesheet" href="ui.css"><script src="policy.js" defer></script><script src="i18n.js" defer></script><script src="popup.js" defer></script></head>
+<body class="popup">
+<header class="brand"><img src="icon.png" width="26" height="26" alt="">MySafeAI <span class="eyebrow" data-text="browser">Browser</span></header>
+<section id="status-card" class="status" aria-live="polite"><div class="status-line"><span class="dot" aria-hidden="true"></span><span id="title">Sites are paused</span></div><p id="description">Checking the connection to MySafeAI…</p></section>
+<section class="groups"><h2 data-text="protect">Sites to protect</h2><div id="groups"></div></section>
+<section class="custom-section"><h2 data-text="custom">Your sites</h2><ul id="custom-domains" class="custom-list"></ul><form id="add-domain-form"><label for="custom-domain" data-text="domainLabel">Domain or HTTPS origin</label><div class="add-domain"><input id="custom-domain" type="text" maxlength="1000" spellcheck="false" autocomplete="off" placeholder="example.com" required><button id="add-domain" type="submit" data-text="add">Add</button></div></form><p class="note" data-text="includesSubdomains">Includes subdomains. Up to 50 custom domains.</p></section>
+<div class="footer"><button id="retry" data-text="retry">Check connection</button><a href="https://github.com/in-devp/MySafeAI/blob/main/docs/browser-extension.md" target="_blank" rel="noreferrer" data-text="setup">How to connect ↗</a></div>
+<div class="language-row"><label for="language" data-text="language">Language</label><select id="language"><option value="system" data-text="system">System</option><option value="ru">Русский</option><option value="en">English</option></select></div>
+<p id="error" class="error" role="alert" hidden></p><p class="note" data-text="note">Protects requests to selected sites. Other tabs keep working. Browser proxy settings stay unchanged.</p>
+</body></html>

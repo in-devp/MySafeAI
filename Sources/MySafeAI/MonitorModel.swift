@@ -16,15 +16,18 @@ final class MonitorModel {
     private(set) var addressSettings: AddressSourceSettings
     private(set) var leakReport: LeakCheckReport?
     private(set) var checkingLeaks = false
-    private(set) var leakMessage: String?
+    private var leakMessageValue: L10n.Value?
+    var leakMessage: String? { leakMessageValue.map { L10n.text($0) } }
     private(set) var observesDNSExternally: Bool
     private(set) var servicePaths: [ServicePath] = []
     private(set) var serviceCountries: [String: String] = [:]
     private(set) var checkingServicePaths = false
     private(set) var checkingTrustedNetwork = false
-    private(set) var trustedNetworkMessage: String?
+    private var trustedNetworkMessageValue: L10n.Value?
+    var trustedNetworkMessage: String? { trustedNetworkMessageValue.map { L10n.text($0) } }
     let background = BackgroundOptions()
     let protection = ProtectionController()
+    let browser = BrowserProtection()
 
     @ObservationIgnored private let monitor = NWPathMonitor()
     @ObservationIgnored private var settingsObserver: NetworkSettingsObserver?
@@ -53,6 +56,8 @@ final class MonitorModel {
         addressSettings.migrateIPv6Sources()
         addressSettings.migrateIPv4Backup()
         protection.onPreflightRequested = { [weak self] in self?.refresh() }
+        protection.onBrowserAccessChanged = { [weak browser] in browser?.publish() }
+        browser.start { [weak protection] in protection?.browserAccessSnapshot() }
         monitor.pathUpdateHandler = { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.networkChanged()
@@ -176,6 +181,18 @@ final class MonitorModel {
         networkChanged()
     }
 
+    func setBrowserProtectionEnabled(_ enabled: Bool) {
+        protection.setBrowserProtectionEnabled(enabled)
+        if enabled, !protection.isManuallyDisabled, protection.protectionPausedUntil == nil {
+            protection.enable()
+        }
+        refresh()
+    }
+
+    func connectBrowserExtension() {
+        browser.connect { [weak self] in self?.setBrowserProtectionEnabled(true) }
+    }
+
     func addAddressSource(_ input: String) -> Bool {
         guard addressSettings.add(input) else { return false }
         saveAddressSettings()
@@ -261,24 +278,24 @@ final class MonitorModel {
         let title = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty, title.count <= 60, !checkingTrustedNetwork, !sleeping else { return }
         checkingTrustedNetwork = true
-        trustedNetworkMessage = nil
+        trustedNetworkMessageValue = nil
         let generation = networkGeneration
         let sources = addressSettings.enabledSources
         Task {
             defer { checkingTrustedNetwork = false }
             let snapshot = await NetworkSnapshot.read()
             guard let router = snapshot.router, !SystemProxyConfiguration.read().isEnabled else {
-                trustedNetworkMessage = "Подключитесь к этой сети с выключенным VPN и системным прокси."
+                trustedNetworkMessageValue = "Подключитесь к этой сети с выключенным VPN и системным прокси."
                 return
             }
             let ips = await ConnectionPolicy.localAddresses(snapshot: snapshot, sources: sources)
             guard !ips.isEmpty, await NetworkSnapshot.read() == snapshot,
                   !SystemProxyConfiguration.read().isEnabled, generation == networkGeneration, !sleeping else {
-                trustedNetworkMessage = "Маршрут или внешний IP не подтверждён. Повторите проверку."
+                trustedNetworkMessageValue = "Маршрут или внешний IP не подтверждён. Повторите проверку."
                 return
             }
             protection.addTrustedNetwork(.init(id: router, name: title, addresses: Set(ips)))
-            trustedNetworkMessage = "Сеть «\(title)» сохранена."
+            trustedNetworkMessageValue = "Сеть «\(title)» сохранена."
             refresh()
         }
     }
@@ -288,7 +305,7 @@ final class MonitorModel {
         let request = UUID()
         leakRequest = request
         checkingLeaks = true
-        leakMessage = nil
+        leakMessageValue = nil
         leakReport = nil
         let sources = addressSettings.enabledSources.filter { !$0.isIPv6Only }
         let ipv6Sources = addressSettings.enabledSources.filter(\.isIPv6Only)
@@ -306,7 +323,7 @@ final class MonitorModel {
             checkingLeaks = false
             leakTask = nil
             guard before == after, proxy == SystemProxyConfiguration.read() else {
-                leakMessage = "Подключение изменилось во время теста. Повторите проверку."
+                leakMessageValue = "Подключение изменилось во время теста. Повторите проверку."
                 return
             }
             let report = LeakCheckReport(snapshot: after, proxy: proxy, direct: values.0,
@@ -317,14 +334,14 @@ final class MonitorModel {
         }
     }
 
-    private func clearLeakCheck(message: String = "Сеть изменилась. Запустите проверку заново.") {
+    private func clearLeakCheck(message: L10n.Value = "Сеть изменилась. Запустите проверку заново.") {
         let hadResults = checkingLeaks || leakReport != nil
         leakRequest = UUID()
         leakTask?.cancel()
         leakTask = nil
         checkingLeaks = false
         leakReport = nil
-        if hadResults { leakMessage = message }
+        if hadResults { leakMessageValue = message }
     }
 
     private func clearAddress() {

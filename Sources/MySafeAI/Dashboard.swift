@@ -17,6 +17,7 @@ struct Dashboard: View {
 
     private enum Page { case overview, protection, routes, addresses, settings, journal, leaks, policies, serviceRoutes }
     @State private var history: [Page] = []
+    @AppStorage(L10n.preferenceKey) private var language = "system"
 
     private var page: Page { history.last ?? .overview }
 
@@ -28,7 +29,7 @@ struct Dashboard: View {
                 Button {
                     history = []
                 } label: {
-                    Label("VPN ждёт подтверждения IP", systemImage: "exclamationmark.shield")
+                    Label(L10n.text("VPN ждёт подтверждения IP"), systemImage: "exclamationmark.shield")
                 }
                 .buttonStyle(PanelButtonStyle(size: .compact, fullWidth: true))
                 .padding(.horizontal, 16)
@@ -48,7 +49,7 @@ struct Dashboard: View {
                     .padding(.vertical, 10)
             } else if page == .leaks {
                 Button(action: model.checkLeaks) {
-                    Label(model.checkingLeaks ? "Проверяем…" : "Проверить утечки",
+                    Label(model.checkingLeaks ? L10n.text("Проверяем…") : L10n.text("Проверить утечки"),
                           systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(PanelButtonStyle(.primary, fullWidth: true))
@@ -59,12 +60,14 @@ struct Dashboard: View {
                 footer.padding(.horizontal, 16)
             }
         }
+        .id(language)
         .frame(minWidth: Self.size.width, maxWidth: inWindow ? .infinity : Self.size.width,
                minHeight: inWindow ? 410 : Self.size.height, maxHeight: inWindow ? .infinity : Self.size.height)
         .font(.system(size: 13))
         .foregroundStyle(ink)
         .tint(mint)
         .environment(\.colorScheme, .dark)
+        .environment(\.locale, L10n.locale)
     }
 
     @ViewBuilder private var pageContent: some View {
@@ -79,7 +82,7 @@ struct Dashboard: View {
                     history.append(.serviceRoutes)
                     model.checkServicePaths()
                 } label: {
-                    Label("Маршруты ИИ", systemImage: "point.topleft.down.to.point.bottomright.curvepath")
+                    Label(L10n.text("Маршруты ИИ"), systemImage: "point.topleft.down.to.point.bottomright.curvepath")
                 }
                 .buttonStyle(PanelButtonStyle(fullWidth: true))
                 RouteDetails(snapshot: model.snapshot, lastCheck: model.lastCheck, refresh: model.refresh)
@@ -106,7 +109,7 @@ struct Dashboard: View {
                     .frame(width: 28, height: 28)
                     .accessibilityHidden(true)
             } else {
-                iconButton("chevron.left", label: "Назад") { _ = history.popLast() }
+                iconButton("chevron.left", label: L10n.text("Назад")) { _ = history.popLast() }
             }
 
             Text(pageTitle)
@@ -114,13 +117,13 @@ struct Dashboard: View {
                 .accessibilityAddTraits(.isHeader)
             Spacer()
             if page == .overview || page == .protection {
-                iconButton("clock.arrow.circlepath", label: "Журнал") { history.append(.journal) }
+                iconButton("clock.arrow.circlepath", label: L10n.text("Журнал")) { history.append(.journal) }
             }
             if page != .settings {
-                iconButton("gearshape", label: "Настройки") { history.append(.settings) }
+                iconButton("gearshape", label: L10n.text("Настройки")) { history.append(.settings) }
             }
             iconButton(inWindow ? "menubar.arrow.up.rectangle" : "macwindow",
-                       label: inWindow ? "Скрыть окно" : "Открыть в отдельном окне") {
+                       label: inWindow ? L10n.text("Скрыть окно") : L10n.text("Открыть в отдельном окне")) {
                 windowAction()
             }
         }
@@ -130,14 +133,14 @@ struct Dashboard: View {
     private var pageTitle: String {
         switch page {
         case .overview: "MySafeAI"
-        case .protection: "Защита приложений"
-        case .routes: "Маршруты"
-        case .addresses: "Проверка IP"
-        case .settings: "Настройки"
-        case .journal: "Журнал защиты"
-        case .leaks: "Проверка утечек"
-        case .policies: "Правила IP и маршрутов"
-        case .serviceRoutes: "Маршруты ИИ"
+        case .protection: L10n.text("Защита приложений")
+        case .routes: L10n.text("Маршруты")
+        case .addresses: L10n.text("Проверка IP")
+        case .settings: L10n.text("Настройки")
+        case .journal: L10n.text("Журнал защиты")
+        case .leaks: L10n.text("Проверка утечек")
+        case .policies: L10n.text("Правила IP и маршрутов")
+        case .serviceRoutes: L10n.text("Маршруты ИИ")
         }
     }
 
@@ -153,7 +156,7 @@ struct Dashboard: View {
                 let paused = !model.protection.pausedApplications.isEmpty
                 let names = paused ? model.protection.pausedApplications : model.protection.protectedApplications
                 VStack(alignment: .leading, spacing: 7) {
-                    Text(paused ? "На паузе" : "Под защитой")
+                    Text(paused ? L10n.text("На паузе") : L10n.text("Под защитой"))
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(muted)
                         .accessibilityAddTraits(.isHeader)
@@ -169,39 +172,39 @@ struct Dashboard: View {
                         }
                     }
                     if names.isEmpty {
-                        Text("Ожидаем запуска выбранных приложений")
+                        Text(L10n.text("Ожидаем запуска выбранных приложений"))
                             .font(.system(size: 12))
                             .foregroundStyle(muted)
                     }
                 }
                 if paused && !model.protection.protectedApplications.isEmpty {
-                    Text("Работают: \(model.protection.protectedApplications.joined(separator: ", "))")
+                    Text(L10n.text("Работают: \(model.protection.protectedApplications.joined(separator: ", "))"))
                         .font(.system(size: 11)).foregroundStyle(muted)
                 }
             }
 
             if model.protection.status == .off {
                 Button(action: model.enableProtection) {
-                    Label(model.protection.protectionPausedUntil == nil ? "Включить защиту" : "Возобновить защиту",
+                    Label(model.protection.protectionPausedUntil == nil ? L10n.text("Включить защиту") : L10n.text("Возобновить защиту"),
                           systemImage: "shield")
                 }
                 .buttonStyle(PanelButtonStyle(.primary, fullWidth: true))
             } else if model.protection.status == .failed {
                 Button(action: model.enableProtection) {
-                    Label("Восстановить защиту", systemImage: "arrow.clockwise.shield")
+                    Label(L10n.text("Восстановить защиту"), systemImage: "arrow.clockwise.shield")
                 }
                 .buttonStyle(PanelButtonStyle(.primary, fullWidth: true))
             }
 
             HStack(spacing: 8) {
                 actionButton(
-                    model.checkingLeaks ? "Проверяем…" : "Проверить утечки",
+                    model.checkingLeaks ? L10n.text("Проверяем…") : L10n.text("Проверить утечки"),
                     icon: "network.badge.shield.half.filled"
                 ) {
                     history.append(.leaks)
                     model.checkLeaks()
                 }
-                actionButton("Маршруты", icon: "point.topleft.down.to.point.bottomright.curvepath") {
+                actionButton(L10n.text("Маршруты"), icon: "point.topleft.down.to.point.bottomright.curvepath") {
                     history.append(.routes)
                 }
             }
@@ -233,31 +236,31 @@ struct Dashboard: View {
                         Text(addressResultLabel(summary))
                             .foregroundStyle(summary.hasDisagreement || summary.responseCount == 0 ? amber : ink)
                         Spacer()
-                        Text("\(summary.responseCount) из \(results.count)")
+                        Text(L10n.text("\(summary.responseCount) из \(results.count)"))
                         Image(systemName: "chevron.right")
                             .accessibilityHidden(true)
                     }
                 }
                 .buttonStyle(PanelButtonStyle(size: .row, fullWidth: true))
-                .accessibilityHint("Показывает ответы отдельных источников")
+                .accessibilityHint(L10n.text("Показывает ответы отдельных источников"))
             }
 
         }
     }
 
     private func addressResultLabel(_ summary: AddressCheckSummary) -> String {
-        if summary.hasDisagreement { return "Источники вернули разные IP" }
-        if summary.responseCount == 0 { return "Не удалось определить IP" }
-        return "Ответы источников"
+        if summary.hasDisagreement { return L10n.text("Источники вернули разные IP") }
+        if summary.responseCount == 0 { return L10n.text("Не удалось определить IP") }
+        return L10n.text("Ответы источников")
     }
 
     private var footer: some View {
         HStack {
             Button { history.append(.protection) } label: {
-                Label("Приложения", systemImage: "square.grid.2x2")
+                Label(L10n.text("Приложения"), systemImage: "square.grid.2x2")
             }
             .buttonStyle(PanelButtonStyle(.quiet, size: .compact))
-            .accessibilityHint("Открывает правила защиты приложений")
+            .accessibilityHint(L10n.text("Открывает правила защиты приложений"))
             if model.protection.status == .failed {
                 Image(systemName: "exclamationmark.shield")
                     .foregroundStyle(amber)
@@ -266,19 +269,19 @@ struct Dashboard: View {
             Spacer()
             Menu {
                 if model.protection.isEnabled {
-                    Button("Пауза на 15 минут", action: model.pauseProtection)
-                    Button("Отключить защиту", action: model.disableProtection)
+                    Button(L10n.text("Пауза на 15 минут"), action: model.pauseProtection)
+                    Button(L10n.text("Отключить защиту"), action: model.disableProtection)
                 } else {
-                    Button(model.protection.protectionPausedUntil == nil ? "Включить защиту" : "Возобновить защиту",
+                    Button(model.protection.protectionPausedUntil == nil ? L10n.text("Включить защиту") : L10n.text("Возобновить защиту"),
                            action: model.enableProtection)
                     if model.protection.protectionPausedUntil != nil || model.protection.status == .failed {
-                        Button("Отключить защиту", action: model.disableProtection)
+                        Button(L10n.text("Отключить защиту"), action: model.disableProtection)
                     }
                 }
                 Divider()
-                Button("Выйти из MySafeAI") { NSApplication.shared.terminate(nil) }
+                Button(L10n.text("Выйти из MySafeAI")) { NSApplication.shared.terminate(nil) }
             } label: {
-                Label("Управление защитой", systemImage: "shield.lefthalf.filled")
+                Label(L10n.text("Управление защитой"), systemImage: "shield.lefthalf.filled")
                     .labelStyle(.iconOnly)
             }
             .menuStyle(.borderlessButton)
@@ -313,16 +316,16 @@ private struct NetworkCard: View {
 
     private var status: (title: String, icon: String, color: Color) {
         if let until = model.protection.protectionPausedUntil, model.protection.status == .off {
-            return ("Пауза защиты до \(until.formatted(date: .omitted, time: .shortened))", "pause.circle.fill", amber)
+            return (L10n.text("Пауза защиты до \(until.formatted(Date.FormatStyle(date: .omitted, time: .shortened).locale(L10n.locale)))"), "pause.circle.fill", amber)
         }
         return switch model.protection.status {
-        case .trusted: ("Защита активна", "checkmark.shield.fill", mint)
-        case .off: ("Защита выключена", "shield", muted)
+        case .trusted: (L10n.text("Защита активна"), "checkmark.shield.fill", mint)
+        case .off: (L10n.text("Защита выключена"), "shield", muted)
         case .checking, .paused:
             model.protection.pausedCount > 0
-                ? ("Приложения на паузе", "pause.circle.fill", amber)
-                : ("Ожидаем безопасный маршрут", "shield", amber)
-        case .failed: ("Ошибка защиты", "exclamationmark.shield.fill", amber)
+                ? (L10n.text("Приложения на паузе"), "pause.circle.fill", amber)
+                : (L10n.text("Ожидаем безопасный маршрут"), "shield", amber)
+        case .failed: (L10n.text("Ошибка защиты"), "exclamationmark.shield.fill", amber)
         }
     }
 
@@ -349,7 +352,7 @@ private struct NetworkCard: View {
                         .minimumScaleFactor(0.6)
                         .textSelection(.enabled)
                     if let address, let code = model.protection.assessment?.countries[address] {
-                        Text(Locale(identifier: "ru").localizedString(forRegionCode: code) ?? code)
+                        Text(L10n.locale.localizedString(forRegionCode: code) ?? code)
                             .font(.system(size: 11)).foregroundStyle(muted)
                     }
                 }
@@ -366,7 +369,7 @@ private struct NetworkCard: View {
                      color: snapshot?.dnsRoute == .outsideTunnel || snapshot?.dnsRoute == .outsideDirect ? amber : ink)
             }
             if let network = model.protection.assessment?.trustedNetwork {
-                Label("Доверенная сеть: \(network)", systemImage: "house")
+                Label(L10n.text("Доверенная сеть: \(network)"), systemImage: "house")
                     .font(.system(size: 11)).foregroundStyle(mint)
             }
 
@@ -391,26 +394,26 @@ private struct NetworkCard: View {
     }
 
     private var addressLabel: String {
-        guard let address else { return "Внешний IP" }
-        if address == model.protection.assessment?.base.observedIPv4 { return "Внешний IPv4 · проверка не завершена" }
-        return address.contains(":") ? "Внешний IPv6" : "Внешний IPv4"
+        guard let address else { return L10n.text("Внешний IP") }
+        if address == model.protection.assessment?.base.observedIPv4 { return L10n.text("Внешний IPv4 · проверка не завершена") }
+        return address.contains(":") ? L10n.text("Внешний IPv6") : L10n.text("Внешний IPv4")
     }
 
     private var ipv4Summary: String {
         switch snapshot?.ipv4 {
-        case .tunnel: "IPv4 · туннель"
-        case .other: "IPv4 · прямой маршрут"
-        case .missing: "IPv4 · нет маршрута"
-        case .unavailable, nil: "IPv4 · неизвестно"
+        case .tunnel: L10n.text("IPv4 · туннель")
+        case .other: L10n.text("IPv4 · прямой маршрут")
+        case .missing: L10n.text("IPv4 · нет маршрута")
+        case .unavailable, nil: L10n.text("IPv4 · неизвестно")
         }
     }
 
     private var ipv6Summary: String {
         switch snapshot?.ipv6 {
-        case .tunnel: "IPv6 · туннель"
-        case .other: "IPv6 · вне туннеля"
-        case .missing: "IPv6 · нет маршрута"
-        case .unavailable, nil: "IPv6 · неизвестно"
+        case .tunnel: L10n.text("IPv6 · туннель")
+        case .other: L10n.text("IPv6 · вне туннеля")
+        case .missing: L10n.text("IPv6 · нет маршрута")
+        case .unavailable, nil: L10n.text("IPv6 · неизвестно")
         }
     }
 
@@ -421,11 +424,11 @@ private struct NetworkCard: View {
 
     private var dnsSummary: String {
         switch snapshot?.dnsRoute {
-        case .viaTunnel: "DNS · через туннель"
-        case .outsideTunnel: "DNS · вне VPN"
-        case .viaDirect: "DNS · через текущую сеть"
-        case .outsideDirect: "DNS · через другую сеть"
-        case .unknown, nil: "DNS · путь неизвестен"
+        case .viaTunnel: L10n.text("DNS · через туннель")
+        case .outsideTunnel: L10n.text("DNS · вне VPN")
+        case .viaDirect: L10n.text("DNS · через текущую сеть")
+        case .outsideDirect: L10n.text("DNS · через другую сеть")
+        case .unknown, nil: L10n.text("DNS · путь неизвестен")
         }
     }
 
@@ -454,13 +457,13 @@ private struct PauseCountdown: View {
                     .rotationEffect(.degrees(-90))
                 VStack(spacing: 0) {
                     Text(seconds.formatted()).font(.system(size: 16, weight: .semibold)).monospacedDigit()
-                    Text("сек").font(.system(size: 9)).foregroundStyle(muted)
+                    Text(L10n.text("сек")).font(.system(size: 9)).foregroundStyle(muted)
                 }
             }
             .frame(width: 45, height: 45)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("До закрытия приложений")
-            .accessibilityValue("\(seconds) сек")
+            .accessibilityLabel(L10n.text("До закрытия приложений"))
+            .accessibilityValue(L10n.text("\(seconds) сек"))
         }
     }
 }
@@ -473,29 +476,29 @@ private struct RouteDetails: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             VStack(spacing: 0) {
-                row("Маршрут IPv4", value: label(snapshot?.ipv4))
+                row(L10n.text("Маршрут IPv4"), value: label(snapshot?.ipv4))
                 PanelGroupDivider()
-                row("Маршрут IPv6", value: label(snapshot?.ipv6))
+                row(L10n.text("Маршрут IPv6"), value: label(snapshot?.ipv6))
                 PanelGroupDivider()
-                row("Маршрут DNS", value: dnsRouteLabel)
+                row(L10n.text("Маршрут DNS"), value: dnsRouteLabel)
                 PanelGroupDivider()
-                row("DNS для интерфейсов", value: dnsLabel(scoped: true))
+                row(L10n.text("DNS для интерфейсов"), value: dnsLabel(scoped: true))
             }
             .panelGroup()
 
-            Text("Системные маршруты по умолчанию. При раздельной маршрутизации путь конкретного приложения может отличаться.")
+            Text(L10n.text("Системные маршруты по умолчанию. При раздельной маршрутизации путь конкретного приложения может отличаться."))
                 .font(.system(size: 12))
                 .foregroundStyle(muted)
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack {
                 if let lastCheck {
-                    Text("Обновлено в \(lastCheck.formatted(date: .omitted, time: .standard))")
+                    Text(L10n.text("Обновлено в \(lastCheck.formatted(Date.FormatStyle(date: .omitted, time: .standard).locale(L10n.locale)))"))
                         .font(.system(size: 11))
                         .foregroundStyle(muted)
                 }
                 Spacer()
-                Button(action: refresh) { Label("Обновить", systemImage: "arrow.clockwise") }
+                Button(action: refresh) { Label(L10n.text("Обновить"), systemImage: "arrow.clockwise") }
                     .buttonStyle(PanelButtonStyle(size: .compact))
             }
         }
@@ -503,31 +506,31 @@ private struct RouteDetails: View {
 
     private var dnsRouteLabel: String {
         switch snapshot?.dnsRoute {
-        case .viaTunnel: "Через туннель"
-        case .outsideTunnel: "Вне VPN"
-        case .viaDirect: "Через текущую сеть"
-        case .outsideDirect: "Через другую сеть"
-        case .unknown, nil: "Не определён"
+        case .viaTunnel: L10n.text("Через туннель")
+        case .outsideTunnel: L10n.text("Вне VPN")
+        case .viaDirect: L10n.text("Через текущую сеть")
+        case .outsideDirect: L10n.text("Через другую сеть")
+        case .unknown, nil: L10n.text("Не определён")
         }
     }
 
     private func dnsLabel(scoped: Bool) -> String {
-        guard case .available(let entries) = snapshot?.dns else { return "Неизвестно" }
+        guard case .available(let entries) = snapshot?.dns else { return L10n.text("Неизвестно") }
         let resolvers = entries.filter { $0.isScoped == scoped }
-        guard !resolvers.isEmpty else { return "Нет записей" }
+        guard !resolvers.isEmpty else { return L10n.text("Нет записей") }
         var interfaces = Set(resolvers.compactMap(\.interface)).sorted()
         if resolvers.contains(where: { $0.interface == nil }) {
-            interfaces.append("без привязки")
+            interfaces.append(L10n.text("без привязки"))
         }
         return interfaces.joined(separator: ", ")
     }
 
     private func label(_ route: DefaultRoute?) -> String {
         switch route {
-        case .tunnel(let name): "Туннель · \(name)"
-        case .other(let name): "Вне туннеля · \(name)"
-        case .missing: "Нет маршрута"
-        case .unavailable, nil: "Неизвестно"
+        case .tunnel(let name): L10n.text("Туннель · \(name)")
+        case .other(let name): L10n.text("Вне туннеля · \(name)")
+        case .missing: L10n.text("Нет маршрута")
+        case .unavailable, nil: L10n.text("Неизвестно")
         }
     }
 
@@ -549,7 +552,7 @@ struct AddressResults: View {
 
     var body: some View {
         if results.isEmpty {
-            Text("Запустите проверку IP из обзора.")
+            Text(L10n.text("Запустите проверку IP из обзора."))
                 .font(.system(size: 12))
                 .foregroundStyle(muted)
         } else {
@@ -600,9 +603,9 @@ struct AddressResults: View {
                 .monospacedDigit()
                 .textSelection(.enabled)
         case .invalidResponse:
-            Text("Некорректный ответ").foregroundStyle(amber)
+            Text(L10n.text("Некорректный ответ")).foregroundStyle(amber)
         case .unavailable:
-            Text("Нет ответа").foregroundStyle(amber)
+            Text(L10n.text("Нет ответа")).foregroundStyle(amber)
         }
     }
 }
@@ -612,39 +615,57 @@ private struct AddressSettings: View {
     let setTrayOnly: @MainActor @Sendable (Bool) -> Void
     @State private var draft = ""
     @AppStorage("trayOnly") private var trayOnly = false
+    @AppStorage(L10n.preferenceKey) private var language = "system"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            section("Поведение защиты") {
-                switchRow("Включать при запуске", icon: "power",
-                          value: model.protection.enablesOnLaunch, change: model.protection.setEnablesOnLaunch)
-                PanelGroupDivider(inset: 44)
-                switchRow("Закрывать после 20 секунд", icon: "timer",
-                          value: model.protection.closesAfterTimeout, change: model.protection.setClosesAfterTimeout)
-                PanelGroupDivider(inset: 44)
-                switchRow("Проверять маршрут DNS", icon: "network",
-                          value: model.protection.blocksOutsideDNS, change: model.setBlocksOutsideDNS)
+            section(L10n.text("Язык интерфейса")) {
+                HStack(spacing: 9) {
+                    PanelIconTile(symbol: "globe")
+                    Picker(L10n.text("Язык"), selection: $language) {
+                        Text(L10n.text("Как в системе")).tag("system")
+                        Text(verbatim: "Русский").tag("ru")
+                        Text(verbatim: "English").tag("en")
+                    }
+                    .pickerStyle(.menu)
+                }
+                .padding(9)
             } hint: {
-                Text("После потери доверенного подключения MySafeAI сначала запросит выход, а через 5 секунд завершит оставшиеся процессы.")
+                Text(L10n.text("Применяется сразу к интерфейсу, меню и новым уведомлениям."))
             }
 
-            section("Работа в фоне") {
-                switchRow("Только в трее", icon: "menubar.rectangle", value: trayOnly, change: setTrayOnly)
+            section(L10n.text("Поведение защиты")) {
+                switchRow(L10n.text("Включать при запуске"), icon: "power",
+                          value: model.protection.enablesOnLaunch, change: model.protection.setEnablesOnLaunch)
                 PanelGroupDivider(inset: 44)
-                switchRow("Запускать при входе в macOS", icon: "person.crop.circle",
+                switchRow(L10n.text("Закрывать после 20 секунд"), icon: "timer",
+                          value: model.protection.closesAfterTimeout, change: model.protection.setClosesAfterTimeout)
+                PanelGroupDivider(inset: 44)
+                switchRow(L10n.text("Проверять маршрут DNS"), icon: "network",
+                          value: model.protection.blocksOutsideDNS, change: model.setBlocksOutsideDNS)
+            } hint: {
+                Text(L10n.text("После потери доверенного подключения MySafeAI сначала запросит выход, а через 5 секунд завершит оставшиеся процессы."))
+            }
+
+            BrowserProtectionSettings(model: model)
+
+            section(L10n.text("Работа в фоне")) {
+                switchRow(L10n.text("Только в трее"), icon: "menubar.rectangle", value: trayOnly, change: setTrayOnly)
+                PanelGroupDivider(inset: 44)
+                switchRow(L10n.text("Запускать при входе в macOS"), icon: "person.crop.circle",
                           value: model.background.loginStatus == .enabled, change: model.background.setLaunchAtLogin)
                 if model.background.loginStatus == .requiresApproval {
-                    Button("Открыть объекты входа", action: model.background.openLoginSettings)
+                    Button(L10n.text("Открыть объекты входа"), action: model.background.openLoginSettings)
                         .buttonStyle(PanelButtonStyle(size: .compact))
                 }
                 PanelGroupDivider(inset: 44)
-                switchRow("Системные уведомления", icon: "bell",
+                switchRow(L10n.text("Системные уведомления"), icon: "bell",
                           value: model.background.notifications, change: model.background.setNotifications)
             } hint: {
                 if let message = model.background.message { Text(message) }
             }
 
-            section("Источники проверки IP") {
+            section(L10n.text("Источники проверки IP")) {
                 let providers = BuiltInAddressSource.allCases
                 ForEach(providers, id: \.self) { provider in
                     if provider != providers.first { PanelGroupDivider(inset: 44) }
@@ -655,24 +676,24 @@ private struct AddressSettings: View {
                     .help(provider.source.url.absoluteString)
                 }
             } hint: {
-                Text("Защита сверяет IP у двух источников. Включённые сервисы видят IP входящего запроса.")
+                Text(L10n.text("Защита сверяет IP у двух источников. Включённые сервисы видят IP входящего запроса."))
             }
 
-            section("Внешняя проверка DNS") {
-                switchRow("Проверять резолверы извне", icon: "server.rack",
+            section(L10n.text("Внешняя проверка DNS")) {
+                switchRow(L10n.text("Проверять резолверы извне"), icon: "server.rack",
                           value: model.observesDNSExternally, change: model.setObservesDNSExternally)
             } hint: {
-                Text("Маршруты DNS проверяются локально. При включении этой опции «Проверить утечки» также запустит тест на bash.ws. Сервис увидит IP устройства и адреса резолверов.")
+                Text(L10n.text("Маршруты DNS проверяются локально. При включении этой опции «Проверить утечки» также запустит тест на bash.ws. Сервис увидит IP устройства и адреса резолверов."))
             }
 
-            section("Свои HTTPS-источники") {
+            section(L10n.text("Свои HTTPS-источники")) {
                 customSources
             } hint: {
                 if !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
                     !model.addressSettings.canAdd(draft) {
-                    Text("Введите новый HTTPS-адрес без учётных данных и параметров.").foregroundStyle(amber)
+                    Text(L10n.text("Введите новый HTTPS-адрес без учётных данных и параметров.")).foregroundStyle(amber)
                 } else {
-                    Text("Источник должен возвращать один IP обычным текстом.")
+                    Text(L10n.text("Источник должен возвращать один IP обычным текстом."))
                 }
             }
         }
@@ -728,7 +749,7 @@ private struct AddressSettings: View {
                         Image(systemName: "minus")
                     }
                     .buttonStyle(PanelButtonStyle(.quiet, size: .icon))
-                    .accessibilityLabel("Удалить \(url.absoluteString)")
+                    .accessibilityLabel(L10n.text("Удалить \(url.absoluteString)"))
                 }
                 .padding(.horizontal, 9)
                 .frame(minHeight: 36)
@@ -741,9 +762,9 @@ private struct AddressSettings: View {
                     .padding(.horizontal, 8)
                     .frame(height: 29)
                     .background(.black.opacity(0.18), in: .rect(cornerRadius: 7))
-                    .accessibilityLabel("HTTPS-адрес источника IP")
+                    .accessibilityLabel(L10n.text("HTTPS-адрес источника IP"))
                     .onSubmit(addSource)
-                Button("Добавить", action: addSource)
+                Button(L10n.text("Добавить"), action: addSource)
                     .buttonStyle(PanelButtonStyle(size: .compact))
                     .disabled(!model.addressSettings.canAdd(draft))
             }

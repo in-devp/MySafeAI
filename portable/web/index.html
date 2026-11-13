@@ -6,6 +6,7 @@
   <title>MySafeAI</title>
   <link rel="icon" href="icon.svg">
   <link rel="stylesheet" href="style.css">
+  <script src="i18n.js" defer></script>
   <script src="panel.js" defer></script>
 </head>
 <body>
@@ -128,6 +129,20 @@
       <ul id="journal"></ul>
     </section>
     <section class="card" id="settings-page" hidden>
+      <h2>Настройки</h2>
+      <label for="language">Язык интерфейса</label>
+      <select id="language">
+        <option value="system">Как в системе</option>
+        <option value="ru">Русский</option>
+        <option value="en">English</option>
+      </select>
+      <p class="hint language-hint">Язык меняется сразу и сохраняется на этом устройстве.</p>
+      <h2>Сайты в браузере</h2>
+      <p class="hint">Расширение приостанавливает запросы к выбранным AI-сайтам. Остальные вкладки работают, настройки прокси не меняются.</p>
+      <p id="browser-status" class="hint" role="status">Подключите браузер и установите расширение из релиза.</p>
+      <div class="actions"><button id="browser-install">Подключить браузеры</button></div>
+      <p class="hint">Chrome, Edge, Brave, Chromium и Firefox. После переноса приложения в другую папку подключите браузеры повторно.</p>
+      <p class="hint"><a id="browser-guide" href="https://github.com/in-devp/MySafeAI/blob/main/docs/browser-extension.md" target="_blank" rel="noreferrer">Установка и границы защиты →</a></p>
       <h2>Работа в фоне</h2>
       <label class="setting" for="tray-only">
         <input id="tray-only" type="checkbox" aria-describedby="tray-hint" disabled>

@@ -26,7 +26,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: portable/go.sum
       - run: swift test
+      - run: cd portable && go test -race ./browserbridge ./cmd/browser-host
       - run: python3 scripts/test-process-recovery.py
       - run: |
           ./scripts/build-macos.sh
@@ -79,10 +84,14 @@ jobs:
         run: |
           go vet -tags production ./...
           go test -tags production -v ./...
+      - name: Measure Windows process and route polling
+        if: runner.os == 'Windows'
+        run: go test -tags production -run '^$' -bench 'BenchmarkWindows(RouteLookup|ProcessInventory)' -benchtime=100x -benchmem .
       - name: Build the application
         run: |
           mkdir -p ../dist/package
           go build -tags production -trimpath -o "../dist/package/${{ matrix.bin }}" .
+          go build -trimpath -o "../dist/package/mysafeai-browser-host${{ runner.os == 'Windows' && '.exe' || '' }}" ./cmd/browser-host
           "../dist/package/${{ matrix.bin }}" --help
           cp ../LICENSE ../README.md ../dist/package/
       - name: Open and verify the Linux desktop window
@@ -100,7 +109,7 @@ jobs:
           if ($process.ExitCode -ne 0) { exit $process.ExitCode }
       - name: Archive Linux binary
         if: runner.os == 'Linux'
-        run: tar -czf "../dist/MySafeAI-Linux-${{ matrix.arch }}.tar.gz" -C ../dist/package mysafeai LICENSE README.md
+        run: tar -czf "../dist/MySafeAI-Linux-${{ matrix.arch }}.tar.gz" -C ../dist/package mysafeai mysafeai-browser-host LICENSE README.md
       - name: Package Linux desktop launcher
         if: runner.os == 'Linux'
         run: ./packaging/linux-deb.sh ../dist/package/mysafeai "../dist/MySafeAI-Linux-${{ matrix.arch }}.deb"
@@ -118,6 +127,47 @@ jobs:
         if: runner.os == 'Linux'
         with:
           path: dist/MySafeAI-Linux-${{ matrix.arch }}.deb
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+  browser:
+    name: Browser extension
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test browser policy and native connection handling
+        run: node --test browser-extension/tests/*.test.cjs portable/web/i18n.test.cjs
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: portable/go.sum
+      - name: Build the native browser test helper
+        run: cd portable && go build -trimpath -o ../dist/browser-test-host ./cmd/browser-host
+      - name: Package browser extensions
+        run: |
+          node browser-extension/package.mjs dist/browser-extension
+          cd dist/browser-extension/chromium && zip -r ../../MySafeAI-Browser-Chromium.zip .
+          cd ../firefox && zip -r ../../MySafeAI-Browser-Firefox.zip .
+      - name: Install isolated test browser
+        run: npx --yes --package playwright@1.65.0 playwright install --with-deps chromium
+      - name: Verify real browser requests and pause page
+        run: |
+          chromium=$(rg --files "$HOME/.cache/ms-playwright" | rg '/chrome-linux(64)?/chrome$' | head -1)
+          test -n "$chromium"
+          node scripts/test-browser-extension.mjs "$chromium" dist/browser-extension/chromium dist/browser-test-host
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/MySafeAI-Browser-Chromium.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          path: dist/MySafeAI-Browser-Firefox.zip
           archive: false
           if-no-files-found: error
           retention-days: 30

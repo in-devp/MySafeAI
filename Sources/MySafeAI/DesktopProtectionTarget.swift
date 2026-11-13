@@ -1,3 +1,4 @@
+import NetworkDiagnostics
 import AppKit
 
 enum DesktopProtectionTarget: String, Codable, CaseIterable, Hashable {
@@ -5,7 +6,7 @@ enum DesktopProtectionTarget: String, Codable, CaseIterable, Hashable {
 
     var title: String {
         switch self {
-        case .chatGPT: "ChatGPT и Codex"
+        case .chatGPT: L10n.text("ChatGPT и Codex")
         case .cursor: "Cursor"
         case .claude: "Claude Desktop"
         }

@@ -51,6 +51,7 @@ final class ProtectionController {
         var networks: [TrustedLocalNetwork]?
         var globalAddresses: AddressAccessPolicy?
         var applicationRules: [String: ApplicationAccessRule]?
+        var browserProtectionEnabled: Bool?
     }
 
     private static let rulesKey = "localProtectionRules"
@@ -71,6 +72,7 @@ final class ProtectionController {
     private(set) var assessment: ConnectionAssessment?
     let journal = ProtectionJournal()
     @ObservationIgnored var onPreflightRequested: (@MainActor () -> Void)?
+    @ObservationIgnored var onBrowserAccessChanged: (@MainActor () -> Void)?
 
     @ObservationIgnored private var pauser: ProcessPauser?
     @ObservationIgnored private var workerID: UUID?
@@ -86,6 +88,7 @@ final class ProtectionController {
     @ObservationIgnored private var attemptedClose: Set<ProcessIdentity> = []
     @ObservationIgnored private var closing: Set<ProcessIdentity> = []
     @ObservationIgnored private var sleeping = false
+    @ObservationIgnored private let browserVerification = IndependentVerification<ConnectionAssessment>()
 
     var applications: [ProtectedApplication] { rules.applications }
     var trustedAddresses: [String] { rules.trustedAddresses.sorted() }
@@ -100,7 +103,8 @@ final class ProtectionController {
     var desktopTargets: Set<DesktopProtectionTarget> {
         rules.desktopTargets ?? Set(DesktopProtectionTarget.allCases)
     }
-    var hasTargets: Bool { !applications.isEmpty || !cliTargets.isEmpty || !desktopTargets.isEmpty }
+    var hasTargets: Bool { !applications.isEmpty || !cliTargets.isEmpty || !desktopTargets.isEmpty || browserProtectionEnabled }
+    var browserProtectionEnabled: Bool { rules.browserProtectionEnabled ?? false }
     var enablesOnLaunch: Bool { rules.enablesOnLaunch ?? true }
     var closesAfterTimeout: Bool { rules.closesAfterTimeout ?? false }
     var blocksOutsideDNS: Bool { rules.blocksOutsideDNS ?? false }
@@ -137,8 +141,8 @@ final class ProtectionController {
     func selectApplication() {
         guard !isEnabled else { return }
         let picker = NSOpenPanel()
-        picker.title = "Выберите приложение для защиты"
-        picker.prompt = "Добавить"
+        picker.title = L10n.text("Выберите приложение для защиты")
+        picker.prompt = L10n.text("Добавить")
         picker.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
         picker.allowedContentTypes = [.applicationBundle]
         picker.canChooseDirectories = false
@@ -194,6 +198,22 @@ final class ProtectionController {
     func setBlocksOutsideDNS(_ enabled: Bool) {
         rules.blocksOutsideDNS = enabled
         saveRules()
+    }
+
+    func setBrowserProtectionEnabled(_ enabled: Bool) {
+        rules.browserProtectionEnabled = enabled
+        saveRules()
+        networkChanged()
+    }
+
+    func browserAccessSnapshot(now: Date = .now) -> BrowserAccessSnapshot? {
+        guard browserProtectionEnabled else { return nil }
+        let browserProof = browserVerification.value?.decisions[ProtectionTarget.browser.id]
+        let verified = browserProof != nil && browserProof?.issue == nil
+        return BrowserAccessSnapshot(now: now, protectionActive: isEnabled,
+                                     explicitlyDisabled: isManuallyDisabled,
+                                     pausedUntil: protectionPausedUntil, sleeping: sleeping,
+                                     trustedAt: verified ? browserVerification.startedAt : nil)
     }
 
     func approveCurrentAddresses(_ addresses: [String]) {
@@ -313,7 +333,7 @@ final class ProtectionController {
     }
 
     func pauseProtection() {
-        guard isEnabled, stop(reason: "Пауза на 15 минут") else { return }
+        guard isEnabled, stop(reason: L10n.text("Пауза на 15 минут")) else { return }
         setSuspension(disabled: false, until: .now.addingTimeInterval(15 * 60))
     }
 
@@ -321,6 +341,7 @@ final class ProtectionController {
         protectionPausedUntil = until
         UserDefaults.standard.set(until, forKey: Self.pauseKey)
         UserDefaults.standard.set(disabled, forKey: Self.disabledKey)
+        onBrowserAccessChanged?()
     }
 
     @discardableResult func stop(reason: String = "") -> Bool {
@@ -370,14 +391,20 @@ final class ProtectionController {
     func sleepChanged(_ isSleeping: Bool) {
         sleeping = isSleeping
         if isSleeping, closing.isEmpty { cancelClose() }
+        onBrowserAccessChanged?()
     }
 
     func update(snapshot: NetworkSnapshot, sources: [AddressSource], preview: Bool = false) {
-        guard (isEnabled || preview), verification == nil else { return }
+        guard isEnabled || preview else { return }
+        // Refresh the browser independently even while an application's service
+        // or PAC check is still pending. Only one browser check runs at a time.
+        updateBrowser(snapshot: snapshot, sources: sources)
+        guard verification == nil else { return }
         let request = verificationID
         let admittedByThisCheck = waitingCommands
         let activeIDs = enabledPolicyIDs.union(ManagedCommand.active().map { $0.protectionTarget.id })
         let targets = policyTargets.filter { activeIDs.contains($0.id) }
+        if isEnabled, targets.isEmpty, browserProtectionEnabled { return }
         let policies = applicationRules
         let global = globalAddressPolicy
         let networks = trustedNetworks
@@ -396,13 +423,56 @@ final class ProtectionController {
         }
     }
 
+    private func updateBrowser(snapshot: NetworkSnapshot, sources: [AddressSource]) {
+        guard browserProtectionEnabled, isEnabled, !sleeping else { return }
+        let global = globalAddressPolicy
+        let networks = trustedNetworks
+        let dns = blocksOutsideDNS
+        browserVerification.start(operation: {
+            await ConnectionPolicy.evaluate(snapshot: snapshot, sources: sources, targets: [.browser],
+                rules: [:], global: global, networks: networks, blocksOutsideDNS: dns)
+        }) { [weak self] in
+            guard let self else { return }
+            guard self.browserVerification.value != nil else {
+                self.networkChanged()
+                return
+            }
+            self.updateAddressPresentation()
+            if self.isEnabled, self.enabledPolicyIDs.isEmpty, ManagedCommand.active().isEmpty {
+                let issue = self.browserVerification.value?.decisions[ProtectionTarget.browser.id]?.issue
+                self.status = issue.map(Status.paused) ??
+                    (self.pausedCount == 0 ? .trusted : .paused(.unexpectedAddress))
+            }
+            self.onBrowserAccessChanged?()
+        }
+    }
+
     private func apply(_ result: ConnectionAssessment) {
         assessment = result
+        updateAddressPresentation()
+        guard isEnabled else { return }
+        allowedTargets = Set(result.decisions.compactMap { id, proof in proof.issue == nil ? id : nil })
+        enforce()
+    }
+
+    private func updateAddressPresentation() {
+        let browser = browserVerification.value
+        guard let primary = assessment ?? browser else { return }
+        var decisions = assessment?.decisions ?? [:]
+        if let proof = browser?.decisions[ProtectionTarget.browser.id] {
+            decisions[ProtectionTarget.browser.id] = proof
+        }
+        let result = ConnectionAssessment(
+            base: browser?.base ?? primary.base, decisions: decisions,
+            countries: primary.countries.merging(browser?.countries ?? [:]) { _, current in current },
+            servicePaths: primary.servicePaths, trustedNetwork: primary.trustedNetwork
+        )
         let relevant = enabledPolicyIDs.union(ManagedCommand.active().map { $0.protectionTarget.id })
+            .union(browserProtectionEnabled ? [ProtectionTarget.browser.id] : [])
         let direct = relevant.sorted().lazy.compactMap { id -> (target: String, addresses: [String])? in
             guard let proof = result.decisions[id], proof.direct,
                   proof.issue == .unexpectedAddress || proof.issue == .unsafeDNS else { return nil }
-            let access = self.applicationRules[id]?.addressPolicy
+            let access = id == ProtectionTarget.browser.id ? nil : self.applicationRules[id]?.addressPolicy
             let addresses = proof.addresses.filter { !(access ?? self.globalAddressPolicy).allowsDirect($0) }
             return addresses.isEmpty ? nil : (access == nil ? "global" : id, addresses)
         }.first
@@ -412,10 +482,10 @@ final class ProtectionController {
         } else {
             pendingDirectTarget = nil
             let proposals = relevant.sorted().flatMap { id -> [String] in
-                guard applicationRules[id]?.addressPolicy == nil,
+                guard (id == ProtectionTarget.browser.id || applicationRules[id]?.addressPolicy == nil),
                       let proof = result.decisions[id], proof.issue == .unexpectedAddress,
                       !proof.direct else { return [] }
-                return proof.addresses.filter { !isGloballyTrusted($0) }
+                return proof.addresses.filter { !globalAddressPolicy.allows($0, country: result.countries[$0]) }
             }
             pendingAddresses = isEnabled ? Set(proposals).sorted() : []
         }
@@ -436,9 +506,6 @@ final class ProtectionController {
             default: addressState = .unavailable
             }
         }
-        guard isEnabled else { return }
-        allowedTargets = Set(result.decisions.compactMap { id, proof in proof.issue == nil ? id : nil })
-        enforce()
     }
 
     func enforce() {
@@ -598,10 +665,12 @@ final class ProtectionController {
         verification = nil
         verifiedCommands = []
         guard !preservingCurrentPolicy else { return }
+        browserVerification.invalidate()
         allowedTargets = []
         assessment = nil
         pendingAddresses = []
         pendingDirectTarget = nil
+        onBrowserAccessChanged?()
     }
 
     private func fail() {

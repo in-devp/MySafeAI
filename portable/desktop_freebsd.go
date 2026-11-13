@@ -52,25 +52,33 @@ static void picker_response(GtkNativeDialog *dialog, int response, gpointer unus
     finish_picker(path);
 }
 
+typedef struct { GAsyncQueue *queue; int english; } PickerRequest;
+
 static gboolean open_picker(gpointer data) {
-    GAsyncQueue *queue = data;
+    PickerRequest *request = data;
+    GAsyncQueue *queue = request->queue;
+    int english = request->english;
+    g_free(request);
     if (!desktop_window || picker_queue) {
         g_async_queue_push(queue, &picker_cancelled);
         g_async_queue_unref(queue);
         return G_SOURCE_REMOVE;
     }
     picker_queue = queue;
-    picker_dialog = GTK_NATIVE_DIALOG(gtk_file_chooser_native_new("Выбрать программу", desktop_window,
-        GTK_FILE_CHOOSER_ACTION_OPEN, "Выбрать", "Отмена"));
+    picker_dialog = GTK_NATIVE_DIALOG(gtk_file_chooser_native_new(english ? "Choose an application" : "Выбрать программу", desktop_window,
+        GTK_FILE_CHOOSER_ACTION_OPEN, english ? "Choose" : "Выбрать", english ? "Cancel" : "Отмена"));
     g_signal_connect(picker_dialog, "response", G_CALLBACK(picker_response), queue);
     gtk_native_dialog_set_modal(picker_dialog, TRUE);
     gtk_native_dialog_show(picker_dialog);
     return G_SOURCE_REMOVE;
 }
 
-static char *pick_program(void) {
+static char *pick_program(int english) {
     GAsyncQueue *queue = g_async_queue_new_full(free_picker_result);
-    g_idle_add(open_picker, g_async_queue_ref(queue));
+    PickerRequest *request = g_new0(PickerRequest, 1);
+    request->queue = g_async_queue_ref(queue);
+    request->english = english;
+    g_idle_add(open_picker, request);
     gpointer result = g_async_queue_timeout_pop(queue, 90 * G_TIME_SPAN_SECOND);
     g_async_queue_unref(queue);
     return result == &picker_cancelled ? NULL : result;
@@ -248,7 +256,11 @@ func runDesktop(parent context.Context, s storage, smoke bool) error {
 	ui := &panel{storage: s, ctx: ctx, running: make(map[string]session), token: secret(),
 		smoke: smoke, tray: hasTray.Load, trayOnly: trayOnly, hide: func() { C.request_hide() }}
 	ui.pick = func() (string, error) {
-		path := C.pick_program()
+		var english C.int
+		if userLanguage() == "en" {
+			english = 1
+		}
+		path := C.pick_program(english)
 		if path == nil {
 			return "", nil
 		}

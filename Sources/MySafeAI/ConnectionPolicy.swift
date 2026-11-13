@@ -7,7 +7,8 @@ struct ProtectionTarget: Identifiable, Sendable {
     let hosts: [String]
     let supportsSystemProxy: Bool
 
-    static let managed = Self(id: "cli:managed", title: "Команды MySafeAI", hosts: [], supportsSystemProxy: false)
+    static var managed: Self { Self(id: "cli:managed", title: L10n.text("Команды MySafeAI"), hosts: [], supportsSystemProxy: false) }
+    static var browser: Self { Self(id: "browser:sites", title: L10n.text("AI-сайты в браузере"), hosts: [], supportsSystemProxy: false) }
 
     static func cli(_ target: CLIProtectionTarget) -> Self {
         Self(id: "cli:" + target.rawValue, title: target.title,
@@ -66,7 +67,11 @@ enum ConnectionPolicy {
                          global: AddressAccessPolicy, networks: [TrustedLocalNetwork],
                          blocksOutsideDNS: Bool) async -> ConnectionAssessment? {
         let proxy = SystemProxyConfiguration.read()
-        let ruleFor: (ProtectionTarget) -> ApplicationAccessRule = { rules[$0.id] ?? .init() }
+        // The browser bridge conveys the global connection policy. It must not
+        // inherit a per-app override or claim to attest the browser's own proxy.
+        let ruleFor: (ProtectionTarget) -> ApplicationAccessRule = {
+            $0.id == ProtectionTarget.browser.id ? .init() : rules[$0.id] ?? .init()
+        }
         let splitHosts = Set(targets.filter { ruleFor($0).transport == .serviceTunnel }
             .flatMap { hosts(for: $0, rule: ruleFor($0)) })
         let proxyHosts = Set(targets.filter { proxy.isEnabled && $0.supportsSystemProxy && ruleFor($0).transport == .systemProxy }

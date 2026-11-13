@@ -19,9 +19,12 @@ iconutil -c icns "$icon_build/AppIcon.iconset" -o "$icon_build/AppIcon.icns"
 
 app="$PWD/dist/MySafeAI.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+ditto "$bin_dir/MySafeAI_NetworkDiagnostics.bundle" "$app/Contents/Resources/MySafeAI_NetworkDiagnostics.bundle"
 temporary_binary=$(mktemp "$app/Contents/MacOS/.MySafeAI.XXXXXX")
 install -m 755 "$bin_dir/MySafeAI" "$temporary_binary"
 mv -f "$temporary_binary" "$app/Contents/MacOS/MySafeAI"
+(cd portable && CGO_ENABLED=0 go build -trimpath -o "$app/Contents/MacOS/mysafeai-browser-host" ./cmd/browser-host)
+codesign --force --sign - "$app/Contents/MacOS/mysafeai-browser-host"
 install -m 644 scripts/Info.plist "$app/Contents/Info.plist"
 install -m 644 "$icon_build/AppIcon.icns" "$app/Contents/Resources/AppIcon.icns"
 install -m 644 "$icon_build/AppIcon.iconset/icon_256x256.png" "$PWD/dist/MySafeAI-logo.png"

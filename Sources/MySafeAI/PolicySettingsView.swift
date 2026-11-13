@@ -18,8 +18,8 @@ struct PolicySettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Picker("Правило", selection: $selection) {
-                Text("Общее").tag("")
+            Picker(L10n.text("Правило"), selection: $selection) {
+                Text(L10n.text("Общее")).tag("")
                 ForEach(model.protection.policyTargets) { item in
                     Text(item.title).tag(item.id)
                 }
@@ -28,35 +28,35 @@ struct PolicySettingsView: View {
 
             if let target {
                 VStack(alignment: .leading, spacing: 9) {
-                    Picker("Подключение", selection: $rule.transport) {
-                        Text("Автоматически · VPN или прямой выход").tag(ProtectionTransport.automatic)
-                        Text("Только VPN").tag(ProtectionTransport.tunnel)
+                    Picker(L10n.text("Подключение"), selection: $rule.transport) {
+                        Text(L10n.text("Автоматически · VPN или прямой выход")).tag(ProtectionTransport.automatic)
+                        Text(L10n.text("Только VPN")).tag(ProtectionTransport.tunnel)
                         if target.id != ProtectionTarget.managed.id {
-                            Text("Туннель до сервисов").tag(ProtectionTransport.serviceTunnel)
+                            Text(L10n.text("Туннель до сервисов")).tag(ProtectionTransport.serviceTunnel)
                         }
                         if target.supportsSystemProxy {
-                            Text("Системный прокси / PAC").tag(ProtectionTransport.systemProxy)
+                            Text(L10n.text("Системный прокси / PAC")).tag(ProtectionTransport.systemProxy)
                         }
                     }
                     if rule.transport == .systemProxy {
-                        Text("Для приложений, настроенных на системный прокси. MySafeAI проверяет выход к указанным сервисам.")
+                        Text(L10n.text("Для приложений, настроенных на системный прокси. MySafeAI проверяет выход к указанным сервисам."))
                             .foregroundStyle(.secondary).font(.system(size: 11))
                         if model.protection.blocksOutsideDNS {
-                            Text("Включена проверка DNS. Без подтверждённого туннеля для DNS приложение останется на паузе.")
+                            Text(L10n.text("Включена проверка DNS. Без подтверждённого туннеля для DNS приложение останется на паузе."))
                                 .foregroundStyle(.secondary).font(.system(size: 11))
                         }
                     }
                     if rule.transport.checksServiceHosts && target.hosts.isEmpty {
-                        field("Хост сервиса", "example.com", $host)
+                        field(L10n.text("Хост сервиса"), "example.com", $host)
                     }
-                    Toggle("Отдельный список IP, подсетей и стран", isOn: $separate)
-                    Toggle("Разрешать в доверенных сетях", isOn: $rule.allowsTrustedNetworks)
+                    Toggle(L10n.text("Отдельный список IP, подсетей и стран"), isOn: $separate)
+                    Toggle(L10n.text("Разрешать в доверенных сетях"), isOn: $rule.allowsTrustedNetworks)
                     if let proof = model.protection.assessment?.decisions[target.id], !proof.addresses.isEmpty {
                         Text(proof.addresses.joined(separator: ", "))
                             .monospacedDigit().textSelection(.enabled)
                             .foregroundStyle(.secondary)
                         if separate && !proof.direct && proof.issue == .unexpectedAddress {
-                            Button("Добавить проверенные IP") {
+                            Button(L10n.text("Добавить проверенные IP")) {
                                 addresses = (tokens(addresses) + proof.addresses).joined(separator: ", ")
                                 feedback = nil
                             }
@@ -68,18 +68,18 @@ struct PolicySettingsView: View {
             }
             if target == nil || separate {
                 VStack(alignment: .leading, spacing: 8) {
-                    field("Отдельные IP", "203.0.113.8, 2001:db8::8", $addresses)
-                    field("IP прямого подключения", "203.0.113.8", $directAddresses)
-                    field("Подсети", "203.0.113.0/24, 2001:db8::/48", $subnets)
-                    field("Коды стран", "NL, DE", $countries)
+                    field(L10n.text("Отдельные IP"), "203.0.113.8, 2001:db8::8", $addresses)
+                    field(L10n.text("IP прямого подключения"), "203.0.113.8", $directAddresses)
+                    field(L10n.text("Подсети"), "203.0.113.0/24, 2001:db8::/48", $subnets)
+                    field(L10n.text("Коды стран"), "NL, DE", $countries)
                     if !countries.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text("Страну определяем по ответу сервиса или через country.is для общего VPN.")
+                        Text(L10n.text("Страну определяем по ответу сервиса или через country.is для общего VPN."))
                             .foregroundStyle(.secondary).font(.system(size: 11))
                     }
                 }
                 .padding(9).panelGroup()
             }
-            Button("Сохранить правило", action: save)
+            Button(L10n.text("Сохранить правило"), action: save)
                 .buttonStyle(PanelButtonStyle(.primary, fullWidth: true))
             if let feedback { Text(feedback).font(.system(size: 11)).foregroundStyle(.secondary) }
             trustedNetworks
@@ -89,9 +89,9 @@ struct PolicySettingsView: View {
 
     private var trustedNetworks: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Доверенные сети").font(.system(size: 12, weight: .semibold))
+            Text(L10n.text("Доверенные сети")).font(.system(size: 12, weight: .semibold))
             if let current = model.protection.assessment?.trustedNetwork {
-                Label("Активна сеть «\(current)»", systemImage: "checkmark.circle")
+                Label(L10n.text("Активна сеть «\(current)»"), systemImage: "checkmark.circle")
                     .foregroundStyle(PanelButtonStyle.accent)
             }
             ForEach(model.protection.trustedNetworks) { network in
@@ -107,12 +107,12 @@ struct PolicySettingsView: View {
                         model.refresh()
                     } label: { Image(systemName: "trash") }
                         .buttonStyle(PanelButtonStyle(.quiet, size: .icon))
-                        .accessibilityLabel("Удалить сеть \(network.name)")
+                        .accessibilityLabel(L10n.text("Удалить сеть \(network.name)"))
                 }
                 .padding(8).panelGroup()
             }
-            field("Название текущей сети", "Дом или офис", $networkName)
-            Button(model.checkingTrustedNetwork ? "Проверяем сеть…" : "Доверять этой сети без VPN") {
+            field(L10n.text("Название текущей сети"), L10n.text("Дом или офис"), $networkName)
+            Button(model.checkingTrustedNetwork ? L10n.text("Проверяем сеть…") : L10n.text("Доверять этой сети без VPN")) {
                 model.rememberTrustedNetwork(networkName)
             }
             .buttonStyle(PanelButtonStyle(fullWidth: true))
@@ -161,7 +161,7 @@ struct PolicySettingsView: View {
             let validCodes = codes.compactMap(AddressAccessPolicy.countryCode)
             guard validIPs.count == ips.count, validDirect.count == direct.count, validRanges.count == ranges.count,
                   validCodes.count == codes.count else {
-                feedback = "Проверьте формат IP, подсетей CIDR и двухбуквенных кодов стран."
+                feedback = L10n.text("Проверьте формат IP, подсетей CIDR и двухбуквенных кодов стран.")
                 return
             }
             access = AddressAccessPolicy(addresses: Set(validIPs), subnets: Set(validRanges), countries: Set(validCodes))
@@ -170,7 +170,7 @@ struct PolicySettingsView: View {
         if let target {
             if rule.transport.checksServiceHosts && target.hosts.isEmpty {
                 guard let value = ServicePath.validatedHost(host) else {
-                    feedback = "Введите имя HTTPS-хоста сервиса."
+                    feedback = L10n.text("Введите имя HTTPS-хоста сервиса.")
                     return
                 }
                 rule.customHost = value
@@ -181,7 +181,7 @@ struct PolicySettingsView: View {
             model.protection.setGlobalAddressPolicy(access)
         }
         model.refresh()
-        feedback = "Правило сохранено. Проверяем подключение."
+        feedback = L10n.text("Правило сохранено. Проверяем подключение.")
     }
 }
 
@@ -190,12 +190,12 @@ struct ServiceRoutesView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Button(model.checkingServicePaths ? "Проверяем…" : "Проверить маршруты ИИ") {
+            Button(model.checkingServicePaths ? L10n.text("Проверяем…") : L10n.text("Проверить маршруты ИИ")) {
                 model.checkServicePaths()
             }
             .buttonStyle(PanelButtonStyle(.primary, fullWidth: true))
             .disabled(model.checkingServicePaths)
-            Text("Проверяем HTTPS-путь до конкретных сервисов и IP, который сервис сообщил в ответе.")
+            Text(L10n.text("Проверяем HTTPS-путь до конкретных сервисов и IP, который сервис сообщил в ответе."))
                 .font(.system(size: 11)).foregroundStyle(.secondary)
             let paths = model.servicePaths.isEmpty ? model.protection.assessment?.servicePaths ?? [] : model.servicePaths
             ForEach(paths) { path in
@@ -207,7 +207,7 @@ struct ServiceRoutesView: View {
                         Text([address, code].compactMap { $0 }.joined(separator: " · "))
                             .monospacedDigit().textSelection(.enabled)
                     } else {
-                        Text("Сервис не сообщил внешний IP").foregroundStyle(.secondary)
+                        Text(L10n.text("Сервис не сообщил внешний IP")).foregroundStyle(.secondary)
                     }
                 }
                 .font(.system(size: 12)).padding(8).panelGroup()
@@ -216,12 +216,12 @@ struct ServiceRoutesView: View {
     }
 
     private func label(_ path: ServicePath) -> String {
-        if path.usedProxy == true { return "Проба через прокси" }
-        if path.systemProxy && path.usedProxy == false { return "Системная проба обошла прокси" }
+        if path.usedProxy == true { return L10n.text("Проба через прокси") }
+        if path.systemProxy && path.usedProxy == false { return L10n.text("Системная проба обошла прокси") }
         switch path.route {
-        case .tunnel(let interface): return "Проба через \(interface)"
-        case .other(let interface): return "Прямой выход · \(interface)"
-        default: return "Путь не определён"
+        case .tunnel(let interface): return L10n.text("Проба через \(interface)")
+        case .other(let interface): return L10n.text("Прямой выход · \(interface)")
+        default: return L10n.text("Путь не определён")
         }
     }
 }

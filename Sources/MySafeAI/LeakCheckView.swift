@@ -28,7 +28,7 @@ struct LeakCheckView: View {
             if model.checkingLeaks {
                 HStack(spacing: 10) {
                     ProgressView().controlSize(.small)
-                    Text("Проверяем прямой выход, прокси, IPv6 и DNS…")
+                    Text(L10n.text("Проверяем прямой выход, прокси, IPv6 и DNS…"))
                         .font(.system(size: 12))
                 }
                 .padding(12)
@@ -38,7 +38,7 @@ struct LeakCheckView: View {
                     Text(report.summary)
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(report.hasWarnings ? Color.orange : Color.primary)
-                    Text("Проверено в \(report.date.formatted(date: .omitted, time: .standard))")
+                    Text(L10n.text("Проверено в \(report.date.formatted(Date.FormatStyle(date: .omitted, time: .standard).locale(L10n.locale)))"))
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
@@ -55,28 +55,28 @@ struct LeakCheckView: View {
                     resolverList(resolvers)
                 }
 
-                DisclosureGroup("Ответы HTTPS-источников") {
+                DisclosureGroup(L10n.text("Ответы HTTPS-источников")) {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Прямой IPv4 · CLI").fontWeight(.medium)
+                        Text(L10n.text("Прямой IPv4 · CLI")).fontWeight(.medium)
                         AddressResults(results: report.direct)
-                        Text("Системный IPv4").fontWeight(.medium)
+                        Text(L10n.text("Системный IPv4")).fontWeight(.medium)
                         AddressResults(results: report.system)
-                        Text("Прямой IPv6").fontWeight(.medium)
+                        Text(L10n.text("Прямой IPv6")).fontWeight(.medium)
                         AddressResults(results: report.ipv6)
                     }
                     .padding(.top, 8)
                 }
                 .font(.system(size: 12))
             } else {
-                Label(model.leakMessage ?? "Сравните выход CLI и системного прокси, проверьте IPv6 и DNS.",
+                Label(model.leakMessage ?? L10n.text("Сравните выход CLI и системного прокси, проверьте IPv6 и DNS."),
                       systemImage: "network.badge.shield.half.filled")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
 
             Text(model.observesDNSExternally
-                 ? "IP проверяют выбранные HTTPS-источники. При внешнем DNS-тесте bash.ws видит IP устройства и резолверов."
-                 : "Маршруты к DNS-серверам проверяются локально. Для проверки внешнего IP используются выбранные HTTPS-источники.")
+                 ? L10n.text("IP проверяют выбранные HTTPS-источники. При внешнем DNS-тесте bash.ws видит IP устройства и резолверов.")
+                 : L10n.text("Маршруты к DNS-серверам проверяются локально. Для проверки внешнего IP используются выбранные HTTPS-источники."))
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -115,7 +115,7 @@ struct LeakCheckView: View {
 
     private func resolverList(_ resolvers: [ObservedDNSResolver]) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text("Кто обработал DNS-запросы")
+            Text(L10n.text("Кто обработал DNS-запросы"))
                 .font(.system(size: 12, weight: .semibold))
             VStack(spacing: 0) {
                 ForEach(resolvers) { resolver in

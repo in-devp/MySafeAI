@@ -2,6 +2,7 @@
 Type=Application
 Name=MySafeAI
 Comment=VPN route monitor and process protection
+Comment[ru]=Проверка подключения и защита приложений
 Exec=mysafeai
 Icon=app.mysafeai.desktop
 Terminal=false

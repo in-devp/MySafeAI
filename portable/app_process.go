@@ -109,6 +109,46 @@ func matchesExecutable(expected, actual string) bool {
 	return expected == actual
 }
 
+// The automatic observer must not freeze the VPN transport merely because it
+// was started from an IDE terminal: doing so disconnects every application.
+// This clears inherited rules only. Explicitly selected executables and AI
+// programs below the boundary are still matched normally. Managed run jobs
+// intentionally retain their full process tree and do not use this exception.
+func inheritedProtectionBoundary(process appProcess) bool {
+	switch executableBase(process.Executable) {
+	case "sing-box", "sing_box", "mihomo", "clash", "wireguard-go", "openvpn", "tailscaled",
+		"xray", "v2ray", "hysteria", "hysteria2", "tuic-client", "ss-local", "sslocal", "warp-svc":
+		return true
+	}
+	return false
+}
+
+func explicitVPNTargetIDs(targets []appTarget) map[string]bool {
+	ids := make(map[string]bool)
+	for _, target := range targets {
+		if target.Executable != "" && inheritedProtectionBoundary(appProcess{Executable: target.Executable}) {
+			ids[target.ID] = true
+		}
+	}
+	return ids
+}
+
+func behindInheritedProtectionBoundary(process appProcess, byPID map[int]appProcess) bool {
+	visited := make(map[int]bool)
+	for process.Key.PID > 1 && !visited[process.Key.PID] {
+		visited[process.Key.PID] = true
+		if inheritedProtectionBoundary(process) {
+			return true
+		}
+		parent := byPID[process.Parent]
+		if parent.Order > process.Order {
+			break // A reused parent PID cannot establish a VPN boundary.
+		}
+		process = parent
+	}
+	return false
+}
+
 func managedGate(process appProcess, executable string) bool {
 	name := executableBase(process.Executable)
 	return (name == "mysafeai" || name == "mysafeai-desktop" ||
@@ -130,6 +170,7 @@ func watchedProcesses(processes []appProcess, targets []appTarget, self int) []w
 		}
 	}
 	presets := make(map[string]bool)
+	explicitVPN := explicitVPNTargetIDs(targets)
 	var custom []appTarget
 	for _, target := range targets {
 		if target.Executable == "" {
@@ -168,7 +209,14 @@ func watchedProcesses(processes []appProcess, targets []appTarget, self int) []w
 		result := watchedProcess{appProcess: process, depth: inherited.depth + 1}
 		excluded[pid] = managedGate(process, byPID[self].Executable) || excluded[parent.Key.PID]
 		if !excluded[pid] {
-			result.targets = append([]string(nil), inherited.targets...)
+			boundary := inheritedProtectionBoundary(process)
+			for _, id := range inherited.targets {
+				// Selecting a VPN executable explicitly also protects nested
+				// transports it launches. An inherited IDE rule does not.
+				if !boundary || explicitVPN[id] {
+					result.targets = append(result.targets, id)
+				}
+			}
 			add := func(id string) {
 				for _, existing := range result.targets {
 					if id == existing {

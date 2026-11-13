@@ -1,7 +1,12 @@
 "use strict";
 
 const get = (id) => document.getElementById(id);
+const i18n = PortableI18n;
+const t = i18n.translate;
 const running = new Map();
+let lastState = null;
+let lastCheck = null;
+let lastLeak = null;
 let verified = [];
 let verifiedMode = "";
 let sessionToken = "";
@@ -38,7 +43,7 @@ async function request(path, body) {
     headers: { "Content-Type": "application/json", "X-MySafeAI-Token": sessionToken },
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error((await response.text()).trim());
+  if (!response.ok) throw new Error(i18n.message((await response.text()).trim()));
   return response.json();
 }
 
@@ -60,14 +65,15 @@ function list(node, lines) {
 }
 
 function display(result) {
-  get("status").textContent = result.trusted ? "Последняя проверка · маршрут подтверждён" : "Последняя проверка · маршрут не разрешён";
+  lastCheck = result;
+  get("status").textContent = result.trusted ? t("Последняя проверка · маршрут подтверждён") : t("Последняя проверка · маршрут не разрешён");
   get("status").dataset.state = result.trusted ? "trusted" : "denied";
   get("ip").textContent = (result.ips || []).join(" · ");
-  get("route-note").textContent = result.reason;
-  get("policy-result").textContent = [result.reason, ...(result.ips || [])].join(" · ");
+  get("route-note").textContent = i18n.message(result.reason);
+  get("policy-result").textContent = [i18n.message(result.reason), ...(result.ips || [])].join(" · ");
   get("diagnostics").hidden = !(result.probes || []).length;
   list(get("providers"), [
-    ...(result.probes || []).map((p) => p.name + " · " + (p.ip || p.error)),
+    ...(result.probes || []).map((p) => p.name + " · " + (p.ip || i18n.message(p.error))),
   ]);
   verified = result.trusted ? [] : (result.ips || []);
   verifiedMode = result.mode;
@@ -76,7 +82,16 @@ function display(result) {
 
 async function refresh(first = false) {
   const state = await request("state");
+  lastState = state;
   sessionToken = state.token;
+  if (first) {
+    const resolved = i18n.choose(state.language?.language, navigator.language);
+    i18n.renderStatic();
+    get("language").value = i18n.preference;
+    if (state.language?.resolved !== resolved) {
+      await request("language", { language: i18n.preference, resolved });
+    }
+  }
   if (!savingWindowMode) {
     get("tray-only").checked = state.trayOnly;
     get("tray-only").disabled = !state.trayAvailable;
@@ -85,14 +100,14 @@ async function refresh(first = false) {
   get("pick").hidden = !state.canPick;
   get("pick-custom").hidden = !state.canPick;
   get("tray-hint").textContent = state.trayAvailable
-    ? "MySafeAI запускается скрытым. Окно открывается из трея."
-    : "Для этого режима нужен системный трей.";
+    ? t("MySafeAI запускается скрытым. Окно открывается из трея.")
+    : t("Для этого режима нужен системный трей.");
   if (first) {
     currentTargets = state.targets || [];
     currentSources = state.sources || [];
     const adapters = new Set(state.adapters || []);
     if (state.config.adapter) adapters.add(state.config.adapter);
-    get("adapter").replaceChildren(new Option("Определять VPN автоматически", ""), ...[...adapters].map((name) => new Option(name, name)));
+    get("adapter").replaceChildren(new Option(t("Определять VPN автоматически"), ""), ...[...adapters].map((name) => new Option(name, name)));
     get("adapter").value = state.config.adapter || "";
     get("allowed").value = (state.config.allowed || []).join("\n");
     get("direct-allowed").value = (state.config.directAllowed || []).join(", ");
@@ -103,7 +118,7 @@ async function refresh(first = false) {
   displayWatch(state.watch, state.config);
   const entries = state.journal.filter(Boolean).reverse();
   get("journal-empty").hidden = entries.length !== 0;
-  list(get("journal"), entries);
+  list(get("journal"), entries.map(i18n.journal));
   const sessions = Object.entries(state.running);
   if (sessions.length !== running.size || sessions.some(([id, session]) => running.get(id)?.name !== session.name || running.get(id)?.state !== session.state)) {
     running.clear();
@@ -144,8 +159,9 @@ function deleteRow(title, onRemove) {
   label.textContent = title;
   const remove = document.createElement("button");
   remove.className = "quiet";
-  remove.textContent = "Удалить";
-  remove.setAttribute("aria-label", "Удалить " + title);
+  remove.dataset.removeTitle = title;
+  remove.textContent = t("Удалить");
+  remove.setAttribute("aria-label", t("Удалить ") + title);
   remove.addEventListener("click", async () => {
     remove.disabled = true;
     try {
@@ -160,8 +176,17 @@ function deleteRow(title, onRemove) {
   return row;
 }
 
+function showBrowserState(config) {
+  get("browser-guide").href = "https://github.com/in-devp/MySafeAI/blob/main/docs/browser-extension" + (i18n.language === "en" ? ".en" : "") + ".md";
+  get("browser-status").textContent = config.browserProtection
+    ? t("Локальный компонент подключён. Установите расширение и выберите сайты в его меню. Без связи с MySafeAI выбранные сайты блокируются.")
+    : t("Подключите локальный компонент, затем установите расширение из релиза.");
+  get("browser-install").textContent = config.browserProtection ? t("Подключить повторно") : t("Подключить браузеры");
+}
+
 function showConfig(config) {
   currentConfig = config;
+  showBrowserState(config);
   pendingSources = [...(config.sources || [])];
   currentTargets = [
     ...currentTargets.filter((target) => !target.executable),
@@ -169,7 +194,7 @@ function showConfig(config) {
   ];
   const targetPicker = get("app-rule-target");
   const selected = targetPicker.value;
-  targetPicker.replaceChildren(new Option("Другие команды", "managed"),
+  targetPicker.replaceChildren(new Option(t("Другие команды"), "managed"),
     ...currentTargets.map((target) => new Option(target.name, target.id)));
   if ([...targetPicker.options].some((option) => option.value === selected)) targetPicker.value = selected;
   showAppRule();
@@ -236,24 +261,24 @@ function displayWatch(state, config) {
   const suspended = !config.protectionDisabled && deadline > new Date();
   const inactive = suspended || config.protectionDisabled;
   get("resume-protection").hidden = !inactive;
-  get("resume-protection").textContent = suspended ? "Возобновить защиту" : "Включить защиту";
+  get("resume-protection").textContent = suspended ? t("Возобновить защиту") : t("Включить защиту");
   get("pause-protection").hidden = inactive;
   get("disable-protection").hidden = config.protectionDisabled;
-  const labels = { checking: "Проверяем подключение", protected: "Доверенное подключение",
-    paused: "Приложения на паузе", off: "Автообнаружение выключено", failed: "Ошибка защиты" };
-  const time = suspended ? deadline.toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" }) : "";
-  const label = suspended ? "Пауза защиты до " + time
-    : config.protectionDisabled ? "Защита выключена"
+  const labels = { checking: t("Проверяем подключение"), protected: t("Доверенное подключение"),
+    paused: t("Приложения на паузе"), off: t("Автообнаружение выключено"), failed: t("Ошибка защиты") };
+  const time = suspended ? deadline.toLocaleTimeString(i18n.language, { hour: "2-digit", minute: "2-digit" }) : "";
+  const label = suspended ? t("Пауза защиты до ") + time
+    : config.protectionDisabled ? t("Защита выключена")
     : labels[state?.state] || labels.checking;
-  const message = [label, state?.message].filter(Boolean).join(" · ");
+  const message = [label, i18n.message(state?.message)].filter(Boolean).join(" · ");
   if (get("watch-status").textContent !== message) get("watch-status").textContent = message;
   const apps = inactive ? [] : state?.apps || [];
-  const current = JSON.stringify(apps);
+  const current = i18n.language + JSON.stringify(apps);
   if (get("watched-apps").dataset.apps !== current) {
     get("watched-apps").dataset.apps = current;
     get("watched-apps").replaceChildren(...apps.map((app) => {
       const item = document.createElement("li");
-      item.textContent = app.name + " · " + ({ paused: "пауза", protected: "под защитой", failed: "ошибка" })[app.state];
+      item.textContent = app.name + " · " + ({ paused: t("пауза"), protected: t("под защитой"), failed: t("ошибка") })[app.state];
       item.dataset.state = app.state;
       return item;
     }));
@@ -265,9 +290,9 @@ function displayWatch(state, config) {
     if (pendingApproval.id !== previousApproval) showPage("overview");
     get("approval-ip").textContent = pendingApproval.ips.join(" · ");
     const target = currentTargets.find((item) => item.id === pendingApproval.target);
-    const connection = pendingApproval.mode === "direct" ? "Прямое подключение · без VPN" : pendingApproval.adapter;
-    const dns = pendingApproval.dnsBlocked ? "Приложения ждут подтверждения маршрута DNS" : "";
-    get("approval-target").textContent = [target?.name || "Общее правило", connection, dns].filter(Boolean).join(" · ");
+    const connection = pendingApproval.mode === "direct" ? t("Прямое подключение · без VPN") : pendingApproval.adapter;
+    const dns = pendingApproval.dnsBlocked ? t("Приложения ждут подтверждения маршрута DNS") : "";
+    get("approval-target").textContent = [target?.name || t("Общее правило"), connection, dns].filter(Boolean).join(" · ");
   }
 }
 
@@ -286,7 +311,7 @@ function action(id, run) {
 }
 
 function showRunning() {
-  const labels = { checking: "Проверяем маршрут", running: "Работает", paused: "На паузе", exited: "Завершено" };
+  const labels = { checking: t("Проверяем маршрут"), running: t("Работает"), paused: t("На паузе"), exited: t("Завершено") };
   get("running").replaceChildren(...[...running].map(([id, session]) => {
     const item = document.createElement("li");
     const label = document.createElement("span");
@@ -297,7 +322,7 @@ function showRunning() {
     label.append(status);
     const button = document.createElement("button");
     button.className = "quiet";
-    button.textContent = "Остановить";
+    button.textContent = t("Остановить");
     button.addEventListener("click", async () => {
       try {
         await request("stop", { id });
@@ -313,14 +338,15 @@ function showRunning() {
 }
 
 get("adapter").addEventListener("change", () => {
+  lastCheck = null;
   verified = [];
   get("trust").hidden = true;
-  get("status").textContent = "Проверьте новый маршрут";
+  get("status").textContent = t("Проверьте новый маршрут");
   delete get("status").dataset.state;
   get("ip").textContent = "";
   get("providers").replaceChildren();
   get("diagnostics").hidden = true;
-  get("route-note").textContent = "Проверьте текущее подключение.";
+  get("route-note").textContent = t("Проверьте текущее подключение.");
   get("policy-result").textContent = "";
 });
 async function checkRoute() {
@@ -335,11 +361,11 @@ action("trust", () => {
   } else {
     get("allowed").value = [...new Set([...policy().allowed, ...verified])].join("\n");
   }
-  get("notice").textContent = "Адреса добавлены. Сохраните правило.";
+  get("notice").textContent = t("Адреса добавлены. Сохраните правило.");
 });
 action("save", async () => {
   showConfig(await request("policy", policy()));
-  get("notice").textContent = "Правило сохранено.";
+  get("notice").textContent = t("Правило сохранено.");
 });
 get("app-rule-target").addEventListener("change", showAppRule);
 get("app-rule-override").addEventListener("change", toggleRuleFields);
@@ -364,9 +390,13 @@ for (const name of ["disable", "pause", "resume"]) {
 }
 action("save-network", async () => {
   const name = get("network-name").value.trim();
-  if (!name) throw new Error("Введите название сети.");
+  if (!name) throw new Error(t("Введите название сети."));
   showConfig(await request("trusted-network", { name }));
   get("network-name").value = "";
+});
+action("browser-install", async () => {
+  showConfig(await request("browser-install", {}));
+  get("notice").textContent = t("Браузеры подключены. Теперь установите расширение по инструкции и откройте его меню.");
 });
 action("save-watch", async () => {
   const targets = [...get("watch-targets").querySelectorAll("input:checked")].map((input) => input.value);
@@ -375,7 +405,7 @@ action("save-watch", async () => {
     blockOutsideDNS: get("block-dns").checked, observeDNS: get("observe-dns").checked,
     notifications: get("notifications").checked,
   }));
-  get("notice").textContent = "Настройки сохранены.";
+  get("notice").textContent = t("Настройки сохранены.");
 });
 action("pick-custom", async () => {
   const { path } = await request("pick", {});
@@ -384,7 +414,7 @@ action("pick-custom", async () => {
 action("add-custom", async () => {
   const name = get("custom-name").value.trim();
   const executable = get("custom-path").value.trim();
-  if (!name || !executable) throw new Error("Введите название и путь к программе.");
+  if (!name || !executable) throw new Error(t("Введите название и путь к программе."));
   showConfig(await request("custom-target", { name, executable }));
   get("custom-name").value = "";
   get("custom-path").value = "";
@@ -392,7 +422,7 @@ action("add-custom", async () => {
 action("add-source", () => {
   const name = get("source-name").value.trim();
   const url = get("source-url").value.trim();
-  if (!name || !url.startsWith("https://")) throw new Error("Введите название и HTTPS-адрес.");
+  if (!name || !url.startsWith("https://")) throw new Error(t("Введите название и HTTPS-адрес."));
   pendingSources.push({ name, url, ipv6: get("source-ipv6").checked });
   showCustomSources();
   get("source-name").value = "";
@@ -402,7 +432,7 @@ action("add-source", () => {
 action("save-sources", async () => {
   const disabled = [...get("ip-sources").querySelectorAll("input:not(:checked)")].map((input) => input.value);
   showConfig(await request("ip-sources", { disabled, custom: pendingSources }));
-  get("notice").textContent = "Источники сохранены.";
+  get("notice").textContent = t("Источники сохранены.");
 });
 get("login-start").addEventListener("change", async (event) => {
   const toggle = event.currentTarget;
@@ -432,28 +462,33 @@ action("decline-ip", () => answerApproval(false));
 action("leak-check", async () => {
   const result = await request("diagnostics", {});
   if (result.changed) {
+    lastLeak = null;
     get("leak-result").hidden = true;
-    throw new Error("Сеть изменилась во время проверки. Повторите проверку.");
+    throw new Error(t("Сеть изменилась во время проверки. Повторите проверку."));
   }
-  const dns = { tunnel: "Через выбранный VPN", outside: "Есть путь вне VPN", unknown: "Маршрут неизвестен" };
-  const proxy = { proxy: "Используется", direct: "Прямое соединение", unknown: "Не подтверждён" };
-  const external = { disabled: "Выключен", unconfirmed: "Резолверы не подтверждены", observed: "Резолверы получены" };
+  displayLeak(result);
+  get("leak-result").scrollIntoView({ block: "nearest" });
+});
+function displayLeak(result) {
+  lastLeak = result;
+  const dns = { tunnel: t("Через выбранный VPN"), outside: t("Есть путь вне VPN"), unknown: t("Маршрут неизвестен") };
+  const proxy = { proxy: t("Используется"), direct: t("Прямое соединение"), unknown: t("Не подтверждён") };
+  const external = { disabled: t("Выключен"), unconfirmed: t("Резолверы не подтверждены"), observed: t("Резолверы получены") };
   list(get("leak-findings"), [
-    "Маршрут IPv4 · " + (result.ipv4Adapter || "не обнаружен"),
-    "Маршрут IPv6 · " + (result.ipv6Adapter || "не обнаружен"),
-    "Системный прокси · " + proxy[result.proxy],
-    "Маршруты DNS · " + dns[result.dns.state],
-    ...(result.dns.servers || []).map((server) => server.address + " · " + (server.adapter || "интерфейс неизвестен")),
-    "Внешний DNS-тест · " + external[result.externalDNS.status],
+    t("Маршрут IPv4 · ") + (result.ipv4Adapter || t("не обнаружен")),
+    t("Маршрут IPv6 · ") + (result.ipv6Adapter || t("не обнаружен")),
+    t("Системный прокси · ") + proxy[result.proxy],
+    t("Маршруты DNS · ") + dns[result.dns.state],
+    ...(result.dns.servers || []).map((server) => server.address + " · " + (server.adapter || t("интерфейс неизвестен"))),
+    t("Внешний DNS-тест · ") + external[result.externalDNS.status],
     ...(result.externalDNS.resolvers || []).map((resolver) => [resolver.ip, resolver.name, resolver.country].filter(Boolean).join(" · ")),
   ]);
   list(get("leak-providers"), [
-    ...(result.direct || []).map((item) => "Прямой · " + item.name + " · " + (item.ip || item.error)),
-    ...(result.system || []).map((item) => "Системный · " + item.name + " · " + (item.ip || item.error)),
+    ...(result.direct || []).map((item) => t("Прямой · ") + item.name + " · " + (item.ip || i18n.message(item.error))),
+    ...(result.system || []).map((item) => t("Системный · ") + item.name + " · " + (item.ip || i18n.message(item.error))),
   ]);
   get("leak-result").hidden = false;
-  get("leak-result").scrollIntoView({ block: "nearest" });
-});
+}
 action("pick", async () => {
   const { path } = await request("pick", {});
   if (path) get("command").value = path;
@@ -464,7 +499,7 @@ action("launch", async () => {
   const { id } = await request("start", { command, args });
   running.set(id, { name: command, state: "checking" });
   showRunning();
-  get("notice").textContent = "Проверяем маршрут перед запуском.";
+  get("notice").textContent = t("Проверяем маршрут перед запуском.");
 });
 action("hide-window", () => request("hide", {}));
 get("tray-only").addEventListener("change", async (event) => {
@@ -485,8 +520,61 @@ get("tray-only").addEventListener("change", async (event) => {
 });
 action("exit", async () => {
   await request("exit", {});
-  get("notice").textContent = "MySafeAI завершает работу.";
+  get("notice").textContent = t("MySafeAI завершает работу.");
 });
 
-refresh(true).catch((error) => { get("notice").textContent = error.message; });
-setInterval(() => refresh().catch(() => {}), 2200);
+function renderLanguage() {
+  const notice = get("notice").textContent;
+  i18n.renderStatic();
+  get("language").value = i18n.preference;
+  const automatic = get("adapter").querySelector('option[value=""]');
+  if (automatic) automatic.textContent = t("Определять VPN автоматически");
+  const managed = get("app-rule-target").querySelector('option[value="managed"]');
+  if (managed) managed.textContent = t("Другие команды");
+  for (const button of document.querySelectorAll('[data-remove-title]')) {
+    button.textContent = t("Удалить");
+    button.setAttribute("aria-label", t("Удалить ") + button.dataset.removeTitle);
+  }
+  showBrowserState(currentConfig);
+  showRunning();
+  if (lastState) {
+    displayWatch(lastState.watch, lastState.config);
+    list(get("journal"), lastState.journal.filter(Boolean).reverse().map(i18n.journal));
+    get("tray-hint").textContent = lastState.trayAvailable
+      ? t("MySafeAI запускается скрытым. Окно открывается из трея.")
+      : t("Для этого режима нужен системный трей.");
+  }
+  if (lastCheck) display(lastCheck);
+  else for (const id of ["status", "route-note"]) get(id).textContent = i18n.message(get(id).textContent);
+  if (lastLeak) displayLeak(lastLeak);
+  get("notice").textContent = i18n.message(notice);
+}
+
+get("language").addEventListener("change", async (event) => {
+  const select = event.currentTarget;
+  const previous = i18n.preference;
+  select.disabled = true;
+  const resolved = i18n.choose(select.value, navigator.language);
+  try {
+    await request("language", { language: i18n.preference, resolved });
+    renderLanguage();
+  } catch (error) {
+    i18n.choose(previous, navigator.language);
+    renderLanguage();
+    get("notice").textContent = i18n.message(error.message);
+  } finally {
+    select.disabled = false;
+  }
+});
+
+async function start() {
+  const response = await fetch("locales.json");
+  if (!response.ok) throw new Error("Unable to load language resources");
+  i18n.configure(await response.json());
+  i18n.captureStatic();
+  i18n.choose("system", navigator.language);
+  i18n.renderStatic();
+  await refresh(true);
+  setInterval(() => refresh().catch(() => {}), 2200);
+}
+start().catch((error) => { get("notice").textContent = error.message; });

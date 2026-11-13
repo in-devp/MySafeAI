@@ -5,18 +5,18 @@ import SwiftUI
 extension ProtectionController.Status {
     var title: String {
         switch self {
-        case .off: "Защита приложений выключена"
-        case .checking: "Проверяем маршрут и IP"
-        case .trusted: "Маршрут и IP подтверждены"
-        case .paused(.noTunnel): "Требуемый маршрут не найден"
-        case .paused(.unsafeIPv6): "Маршрут IPv6 не подтверждён"
-        case .paused(.unsafeDNS): "Маршрут DNS не подтверждён"
-        case .paused(.noResponse): "Не удалось подтвердить IP"
-        case .paused(.disagreement): "Источники вернули разные адреса"
-        case .paused(.unexpectedAddress): "IP вне списка доверенных"
-        case .paused(.serviceUnverified): "Маршрут к сервису не подтверждён"
-        case .paused(.proxyUnverified): "Системный прокси для сервиса не подтверждён"
-        case .failed: "Ошибка защиты приложений"
+        case .off: L10n.text("Защита приложений выключена")
+        case .checking: L10n.text("Проверяем маршрут и IP")
+        case .trusted: L10n.text("Маршрут и IP подтверждены")
+        case .paused(.noTunnel): L10n.text("Требуемый маршрут не найден")
+        case .paused(.unsafeIPv6): L10n.text("Маршрут IPv6 не подтверждён")
+        case .paused(.unsafeDNS): L10n.text("Маршрут DNS не подтверждён")
+        case .paused(.noResponse): L10n.text("Не удалось подтвердить IP")
+        case .paused(.disagreement): L10n.text("Источники вернули разные адреса")
+        case .paused(.unexpectedAddress): L10n.text("IP вне списка доверенных")
+        case .paused(.serviceUnverified): L10n.text("Маршрут к сервису не подтверждён")
+        case .paused(.proxyUnverified): L10n.text("Системный прокси для сервиса не подтверждён")
+        case .failed: L10n.text("Ошибка защиты приложений")
         }
     }
 }
@@ -32,7 +32,7 @@ struct ProtectionView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 15) {
             if protection.status == .failed {
-                Label("Ошибка защиты. Остановленные процессы сохраняют паузу. Повторите запуск защиты или отключите её.",
+                Label(L10n.text("Ошибка защиты. Остановленные процессы сохраняют паузу. Повторите запуск защиты или отключите её."),
                       systemImage: "exclamationmark.circle")
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
@@ -41,7 +41,7 @@ struct ProtectionView: View {
             addressRules
             if let showRules {
                 Button(action: showRules) {
-                    Label("Правила IP и маршрутов", systemImage: "list.bullet.rectangle")
+                    Label(L10n.text("Правила IP и маршрутов"), systemImage: "list.bullet.rectangle")
                 }
                 .buttonStyle(PanelButtonStyle(fullWidth: true))
             }
@@ -59,7 +59,7 @@ struct ProtectionView: View {
         }
 
         return VStack(alignment: .leading, spacing: 7) {
-            Text(protection.isEnabled ? "Правила защиты" : "Что защищать")
+            Text(protection.isEnabled ? L10n.text("Правила защиты") : L10n.text("Что защищать"))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .padding(.leading, 10)
@@ -81,7 +81,7 @@ struct ProtectionView: View {
                 if !protection.isEnabled {
                     targetDivider
                     Button(action: protection.selectApplication) {
-                        targetRow("Добавить приложение…") {
+                        targetRow(L10n.text("Добавить приложение…")) {
                             PanelIconTile(symbol: "plus")
                         } accessory: {
                             Image(systemName: "chevron.right")
@@ -96,7 +96,7 @@ struct ProtectionView: View {
             .panelGroup()
 
             if protection.selectionError {
-                Text("Выберите другой пакет .app с исполняемым файлом.")
+                Text(L10n.text("Выберите другой пакет .app с исполняемым файлом."))
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
             }
@@ -138,7 +138,7 @@ struct ProtectionView: View {
         } else {
             Button(action: change) { row }
             .buttonStyle(PanelButtonStyle(.quiet, size: .row, fullWidth: true))
-            .accessibilityValue(selected ? "Выбрано" : "Не выбрано")
+            .accessibilityValue(selected ? L10n.text("Выбрано") : L10n.text("Не выбрано"))
             .accessibilityAddTraits(selected ? .isSelected : [])
         }
     }
@@ -154,8 +154,8 @@ struct ProtectionView: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(PanelButtonStyle(.quiet, size: .icon))
-                .accessibilityLabel("Убрать \(app.name) из защиты")
-                .help("Убрать из защиты")
+                .accessibilityLabel(L10n.text("Убрать \(app.name) из защиты"))
+                .help(L10n.text("Убрать из защиты"))
             }
             PanelSelectionMark(selected: true)
         }
@@ -186,13 +186,13 @@ struct ProtectionView: View {
         let other = protection.trustedAddresses.filter { !current.contains($0) }
         let showsDecision = protection.isEnabled && !protection.pendingAddresses.isEmpty
         return VStack(alignment: .leading, spacing: 8) {
-            Text("Доверенные IP")
+            Text(L10n.text("Доверенные IP"))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .accessibilityAddTraits(.isHeader)
 
             VStack(alignment: .leading, spacing: 10) {
-                Text("Текущее подключение")
+                Text(L10n.text("Текущее подключение"))
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                 if current.isEmpty {
@@ -209,7 +209,7 @@ struct ProtectionView: View {
                         Button {
                             for address in current { _ = protection.addAddress(address) }
                         } label: {
-                            Label(current.count == 1 ? "Разрешить этот IP" : "Разрешить эти IP",
+                            Label(current.count == 1 ? L10n.text("Разрешить этот IP") : L10n.text("Разрешить эти IP"),
                                   systemImage: "checkmark.shield")
                         }
                         .buttonStyle(PanelButtonStyle(.primary, fullWidth: true))
@@ -239,7 +239,7 @@ struct ProtectionView: View {
                         showsAddressInput = true
                         addressInputFocused = true
                     } label: {
-                        Label("Добавить другой IP", systemImage: "plus")
+                        Label(L10n.text("Добавить другой IP"), systemImage: "plus")
                     }
                     .buttonStyle(PanelButtonStyle(fullWidth: true))
                 }
@@ -249,20 +249,20 @@ struct ProtectionView: View {
 
     private var manualAddressEntry: some View {
         VStack(alignment: .leading, spacing: 8) {
-            TextField("IPv4 или IPv6", text: $addressInput)
+            TextField(L10n.text("IPv4 или IPv6"), text: $addressInput)
                 .textFieldStyle(.plain)
                 .padding(9)
                 .background(.white.opacity(0.05), in: .rect(cornerRadius: 7))
-                .accessibilityLabel("Другой доверенный IP")
+                .accessibilityLabel(L10n.text("Другой доверенный IP"))
                 .focused($addressInputFocused)
                 .onSubmit(addAddress)
             HStack(spacing: 8) {
-                Button("Отмена") {
+                Button(L10n.text("Отмена")) {
                     addressInput = ""
                     showsAddressInput = false
                 }
                 .buttonStyle(PanelButtonStyle(fullWidth: true))
-                Button("Сохранить IP", action: addAddress)
+                Button(L10n.text("Сохранить IP"), action: addAddress)
                     .buttonStyle(PanelButtonStyle(.primary, fullWidth: true))
                     .disabled(AddressEcho.parse(addressInput) == nil)
             }
@@ -284,7 +284,7 @@ struct ProtectionView: View {
             : protection.isGloballyTrusted(address)) || protection.assessment?.trustedNetwork != nil
         return VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 8) {
-                Label(trusted ? "Разрешён" : "Ждёт разрешения",
+                Label(trusted ? L10n.text("Разрешён") : L10n.text("Ждёт разрешения"),
                       systemImage: trusted ? "checkmark.circle.fill" : "questionmark.circle")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(trusted ? PanelButtonStyle.accent : .secondary)
@@ -318,8 +318,8 @@ struct ProtectionView: View {
             Image(systemName: "trash")
         }
         .buttonStyle(PanelButtonStyle(.quiet, size: .icon))
-        .accessibilityLabel("Убрать \(address) из доверенных")
-        .help("Убрать из доверенных")
+        .accessibilityLabel(L10n.text("Убрать \(address) из доверенных"))
+        .help(L10n.text("Убрать из доверенных"))
     }
 }
 
@@ -328,24 +328,24 @@ struct ProtectionActions: View {
 
     private var setupHint: String {
         if model.addressSettings.enabledSources.isEmpty {
-            return "Включите два источника проверки IP в настройках."
+            return L10n.text("Включите два источника проверки IP в настройках.")
         }
         if !model.protection.hasTargets {
-            return "Защита будет действовать для команд mysafeai run."
+            return L10n.text("Защита будет действовать для команд mysafeai run.")
         }
-        return "Приложения будут на паузе до подтверждения IP."
+        return L10n.text("Приложения будут на паузе до подтверждения IP.")
     }
 
     var body: some View {
         if model.protection.status == .off {
             VStack(alignment: .leading, spacing: 6) {
                 Text(model.protection.protectionPausedUntil.map {
-                    "Пауза защиты до \($0.formatted(date: .omitted, time: .shortened))."
+                    L10n.text("Пауза защиты до \($0.formatted(Date.FormatStyle(date: .omitted, time: .shortened).locale(L10n.locale))).")
                 } ?? setupHint)
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                 Button(action: model.enableProtection) {
-                    Label(model.protection.protectionPausedUntil == nil ? "Включить защиту" : "Возобновить защиту",
+                    Label(model.protection.protectionPausedUntil == nil ? L10n.text("Включить защиту") : L10n.text("Возобновить защиту"),
                           systemImage: "shield")
                 }
                 .buttonStyle(PanelButtonStyle(.primary, fullWidth: true))
@@ -353,22 +353,22 @@ struct ProtectionActions: View {
         } else if model.protection.status == .failed {
             VStack(spacing: 7) {
                 Button(action: model.enableProtection) {
-                    Label("Восстановить защиту", systemImage: "arrow.clockwise.shield")
+                    Label(L10n.text("Восстановить защиту"), systemImage: "arrow.clockwise.shield")
                 }
                 .buttonStyle(PanelButtonStyle(.primary, fullWidth: true))
                 Button(action: model.disableProtection) {
-                    Text("Отключить и снять паузу")
+                    Text(L10n.text("Отключить и снять паузу"))
                 }
                 .buttonStyle(PanelButtonStyle(fullWidth: true))
             }
         } else {
             HStack(spacing: 7) {
                 Button(action: model.pauseProtection) {
-                    Label("Пауза на 15 минут", systemImage: "pause.circle")
+                    Label(L10n.text("Пауза на 15 минут"), systemImage: "pause.circle")
                 }
                 .buttonStyle(PanelButtonStyle(fullWidth: true))
                 Button(action: model.disableProtection) {
-                    Label("Отключить защиту", systemImage: "shield.slash")
+                    Label(L10n.text("Отключить защиту"), systemImage: "shield.slash")
                 }
                 .buttonStyle(PanelButtonStyle(fullWidth: true))
             }
@@ -389,38 +389,38 @@ struct VPNAddressApproval: View {
 
         VStack(alignment: .leading, spacing: 7) {
             if protection.pausedCount > 0 && !embedded {
-                Label("На паузе: \(protection.pausedCount)", systemImage: "pause.circle.fill")
+                Label(L10n.text("На паузе: \(protection.pausedCount)"), systemImage: "pause.circle.fill")
                     .foregroundStyle(Color(red: 1.0, green: 0.79, blue: 0.52))
                     .fontWeight(.medium)
             }
             switch protection.addressState {
             case .checking:
-                Label("Определяем внешний IP…", systemImage: "ellipsis.circle")
+                Label(L10n.text("Определяем внешний IP…"), systemImage: "ellipsis.circle")
             case .noTunnel:
-                Label("Нет подтверждённого маршрута IPv4", systemImage: "network")
+                Label(L10n.text("Нет подтверждённого маршрута IPv4"), systemImage: "network")
             case .unsafeIPv6:
-                Label("Маршрут IPv6 не подтверждён", systemImage: "exclamationmark.circle")
+                Label(L10n.text("Маршрут IPv6 не подтверждён"), systemImage: "exclamationmark.circle")
             case .unverifiedIPv6:
-                Label("Два источника должны подтвердить IPv6", systemImage: "exclamationmark.circle")
+                Label(L10n.text("Два источника должны подтвердить IPv6"), systemImage: "exclamationmark.circle")
             case .unavailable:
-                Label("Два источника должны подтвердить IP", systemImage: "exclamationmark.circle")
+                Label(L10n.text("Два источника должны подтвердить IP"), systemImage: "exclamationmark.circle")
             case .disagreement:
-                Label("Сервисы проверки видят разные IP", systemImage: "exclamationmark.circle")
+                Label(L10n.text("Сервисы проверки видят разные IP"), systemImage: "exclamationmark.circle")
             case .serviceUnverified:
-                Label("Путь к сервису через туннель не подтверждён", systemImage: "point.3.connected.trianglepath.dotted")
+                Label(L10n.text("Путь к сервису через туннель не подтверждён"), systemImage: "point.3.connected.trianglepath.dotted")
             case .proxyUnverified:
-                Label("Сервис не подтвердил выход через системный прокси", systemImage: "network")
+                Label(L10n.text("Сервис не подтвердил выход через системный прокси"), systemImage: "network")
             case .current(let addresses):
                 Text(pending.isEmpty ? protection.status.title
-                     : declined ? "Текущий IP отклонён" : "Разрешить текущий IP?")
+                     : declined ? L10n.text("Текущий IP отклонён") : L10n.text("Разрешить текущий IP?"))
                     .fontWeight(.semibold)
                 if let target = protection.pendingDirectTarget {
                     Text(protection.policyTargets.first { $0.id == target }
-                        .map { "Прямое подключение · \($0.title)" } ?? "Прямое подключение · без VPN")
+                        .map { L10n.text("Прямое подключение · \($0.title)") } ?? L10n.text("Прямое подключение · без VPN"))
                         .foregroundStyle(.secondary)
                 }
                 if !pending.isEmpty && protection.status == .paused(.unsafeDNS) {
-                    Text("Приложения останутся на паузе, пока маршрут DNS не подтвердится.")
+                    Text(L10n.text("Приложения останутся на паузе, пока маршрут DNS не подтвердится."))
                         .foregroundStyle(.secondary)
                 }
                 ForEach(showsPrimaryAddress ? addresses : Array(addresses.dropFirst()), id: \.self) { address in
@@ -434,12 +434,12 @@ struct VPNAddressApproval: View {
                         Button {
                             model.approveVPNAddress(pending)
                         } label: {
-                            Label(pending.count == 1 ? "Разрешить IP" : "Разрешить эти IP",
+                            Label(pending.count == 1 ? L10n.text("Разрешить IP") : L10n.text("Разрешить эти IP"),
                                   systemImage: "checkmark")
                         }
                         .buttonStyle(PanelButtonStyle(.primary, fullWidth: true))
                         if !declined {
-                            Button("Не разрешать") { protection.declineCurrentAddresses(pending) }
+                            Button(L10n.text("Не разрешать")) { protection.declineCurrentAddresses(pending) }
                                 .buttonStyle(PanelButtonStyle(fullWidth: true))
                         }
                     }
@@ -460,11 +460,11 @@ struct ProtectionJournalView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if journal.writeFailed {
-                Label("Не удалось сохранить события на диск", systemImage: "exclamationmark.circle")
+                Label(L10n.text("Не удалось сохранить события на диск"), systemImage: "exclamationmark.circle")
                     .foregroundStyle(.orange)
             }
             if journal.events.isEmpty {
-                Text("Здесь появятся события защиты.")
+                Text(L10n.text("Здесь появятся события защиты."))
                     .foregroundStyle(.secondary)
             }
             if !journal.events.isEmpty {
@@ -486,11 +486,11 @@ struct ProtectionJournalView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(event.kind.title).fontWeight(.medium)
                 if !event.detail.isEmpty {
-                    Text(event.detail).foregroundStyle(.secondary).textSelection(.enabled)
+                    Text(event.localizedDetail).foregroundStyle(.secondary).textSelection(.enabled)
                 }
             }
             Spacer(minLength: 6)
-            Text(event.date.formatted(date: .abbreviated, time: .shortened))
+            Text(event.date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened).locale(L10n.locale)))
                 .font(.system(size: 10))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.trailing)

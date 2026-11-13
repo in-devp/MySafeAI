@@ -1,3 +1,4 @@
+import NetworkDiagnostics
 import AppKit
 import Carbon
 import Observation
@@ -12,6 +13,8 @@ final class MySafeAIApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
     private var offeredAddresses: [String] = []
     private var approvalPanel: NSPanel?
     private var desktopWindow: NSWindow?
+    private var languageObserver: NSObjectProtocol?
+    private var displayedLanguage = L10n.language
     private let applicationIcon = Bundle.main.url(forResource: "AppIcon", withExtension: "icns")
         .flatMap { NSImage(contentsOf: $0) } ?? BrandMark.badge
     private let restoring: Bool
@@ -59,8 +62,8 @@ final class MySafeAIApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
             return
         } catch {
             let alert = NSAlert()
-            alert.messageText = "Не удалось открыть состояние защиты"
-            alert.informativeText = "Проверьте доступ к папке MySafeAI в Application Support и запустите приложение повторно."
+            alert.messageText = L10n.text("Не удалось открыть состояние защиты")
+            alert.informativeText = L10n.text("Проверьте доступ к папке MySafeAI в Application Support и запустите приложение повторно.")
             alert.runModal()
         }
     }
@@ -78,6 +81,11 @@ final class MySafeAIApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
         observeProtectionStatus()
 
         installMenu()
+        languageObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.refreshLanguage() }
+        }
         if smokeWindow {
             showDesktopWindow()
             Task { @MainActor in
@@ -160,8 +168,8 @@ final class MySafeAIApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
             case .paused: indicator = .paused
             case .failed: indicator = .warning
             }
-            let title = model.protection.protectionPausedUntil == nil ? status.title : "Пауза защиты"
-            let label = needsApproval ? "MySafeAI · Подтвердить IP" : "MySafeAI · \(title)"
+            let title = model.protection.protectionPausedUntil == nil ? status.title : L10n.text("Пауза защиты")
+            let label = needsApproval ? L10n.text("MySafeAI · Подтвердить IP") : "MySafeAI · \(title)"
             statusItem?.button?.image = BrandMark.menuIcon(needsApproval ? .warning : indicator, label: label)
             statusItem?.button?.toolTip = label
             if (status == .trusted && pending.isEmpty) || status == .off {
@@ -176,6 +184,19 @@ final class MySafeAIApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
         } onChange: { [weak self] in
             Task { @MainActor in self?.observeProtectionStatus() }
         }
+    }
+
+    private func refreshLanguage() {
+        guard displayedLanguage != L10n.language else { return }
+        displayedLanguage = L10n.language
+        installMenu()
+        let protection = model.protection
+        let needsApproval = !protection.pendingAddresses.isEmpty &&
+            protection.pendingAddresses != protection.declinedAddresses
+        let title = protection.protectionPausedUntil == nil ? protection.status.title : L10n.text("Пауза защиты")
+        let label = needsApproval ? L10n.text("MySafeAI · Подтвердить IP") : "MySafeAI · \(title)"
+        statusItem?.button?.toolTip = label
+        statusItem?.button?.image?.accessibilityDescription = label
     }
 
     @objc private func togglePopover(_ sender: NSStatusBarButton) {
@@ -290,24 +311,24 @@ final class MySafeAIApp: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
         let main = NSMenu()
         let appItem = NSMenuItem()
         let appMenu = NSMenu(title: "MySafeAI")
-        let openItem = appMenu.addItem(withTitle: "Открыть окно MySafeAI", action: #selector(openDesktopMode), keyEquivalent: "0")
+        let openItem = appMenu.addItem(withTitle: L10n.text("Открыть окно MySafeAI"), action: #selector(openDesktopMode), keyEquivalent: "0")
         openItem.target = self
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Выйти из MySafeAI", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: L10n.text("Выйти из MySafeAI"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         main.addItem(appItem)
         let editItem = NSMenuItem()
-        let editMenu = NSMenu(title: "Правка")
-        editMenu.addItem(withTitle: "Вырезать", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "Копировать", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "Вставить", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "Выбрать всё", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        let editMenu = NSMenu(title: L10n.text("Правка"))
+        editMenu.addItem(withTitle: L10n.text("Вырезать"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: L10n.text("Копировать"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: L10n.text("Вставить"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: L10n.text("Выбрать всё"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = editMenu
         main.addItem(editItem)
         let windowItem = NSMenuItem()
-        let windowMenu = NSMenu(title: "Окно")
-        windowMenu.addItem(withTitle: "Закрыть окно", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
-        windowMenu.addItem(withTitle: "Свернуть", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        let windowMenu = NSMenu(title: L10n.text("Окно"))
+        windowMenu.addItem(withTitle: L10n.text("Закрыть окно"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowMenu.addItem(withTitle: L10n.text("Свернуть"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowItem.submenu = windowMenu
         main.addItem(windowItem)
         NSApp.mainMenu = main
