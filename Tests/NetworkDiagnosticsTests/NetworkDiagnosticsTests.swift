@@ -69,23 +69,31 @@ import Testing
     #expect(source.parse("ip=not-an-ip") == nil)
 }
 
-@Test func defaultsToThreeIPv4SourcesAndPreservesCustomOnlySettings() throws {
+@Test func selectsOneSourcePerFamilyAndPreservesCustomSettings() throws {
     var settings = AddressSourceSettings()
-    #expect(settings.enabledSources.map(\.name) == ["AWS", "Cloudflare", "ipify", "ident.me · IPv6", "ipify · IPv6"])
+    #expect(settings.selectedSources(includeIPv6: false).map(\.name) == ["ipify"])
+    #expect(settings.selectedSources(includeIPv6: true).map(\.name) == ["ipify", "ipify · IPv6"])
     #expect(!settings.canAdd("HTTPS://CHECKIP.AMAZONAWS.COM:443"))
     let added = settings.add("https://example.com/ip")
     #expect(added)
     #expect(!settings.canAdd("https://EXAMPLE.com:443/ip"))
-    settings.enabledBuiltIns.insert(.ipify)
+    let addedSecond = settings.add("https://example.org/ip")
+    #expect(addedSecond)
     let decoded = try JSONDecoder().decode(AddressSourceSettings.self, from: JSONEncoder().encode(settings))
-    #expect(decoded.enabledSources.map(\.name) == ["AWS", "Cloudflare", "ipify", "ident.me · IPv6", "ipify · IPv6", "example.com"])
+    #expect(decoded.selectedSources(includeIPv6: true).map(\.name) == ["example.com", "ipify · IPv6"])
     settings.remove(try #require(settings.customURLs.first))
-    #expect(settings.customURLs.isEmpty)
+    #expect(settings.selectedSources(includeIPv6: false).map(\.name) == ["example.org"])
 
     let previous = AddressSourceSettings(previousEndpoint: "https://example.com/ip")
-    #expect(previous.enabledSources.map(\.name) == ["example.com"])
+    #expect(previous.selectedSources(includeIPv6: true).map(\.name) == ["example.com"])
     let previousAWS = AddressSourceSettings(previousEndpoint: "https://checkip.amazonaws.com")
-    #expect(previousAWS.enabledSources.map(\.name) == ["AWS"])
+    #expect(previousAWS.selectedSources(includeIPv6: false).map(\.name) == ["AWS"])
+
+    let previousIPv6 = AddressSourceSettings(previousEndpoint: "https://[2001:db8::42]/ip")
+    #expect(previousIPv6.selectedSources(includeIPv6: false).isEmpty)
+    let ipv6 = try #require(previousIPv6.selectedSources(includeIPv6: true).first)
+    #expect(ipv6.parse("2001:db8::42") == "2001:db8::42")
+    #expect(ipv6.parse("203.0.113.42") == nil)
 }
 
 @Test func comparesAddressesWithinTheirIPFamily() {
@@ -127,18 +135,18 @@ import Testing
         .init(source: $0.source, outcome: .address("2001:db8::42"))
     }
     #expect(dual.verify(v4) == .insufficientIPv6)
-    #expect(dual.verify(v4 + Array(v6.prefix(1))) == .insufficientIPv6)
+    #expect(dual.verify(Array(v4.prefix(1)) + Array(v6.prefix(1))) == .confirmed(["203.0.113.42", "2001:db8::42"]))
     #expect(dual.verify(v4 + v6) == .confirmed(["203.0.113.42", "2001:db8::42"]))
 }
 
-@Test func requiresTwoAgreeingHostsAndToleratesAnUnavailableThirdSource() throws {
+@Test func acceptsOneValidAddressAndRejectsMissingOrConflictingReplies() throws {
     let route = try #require(TrustedRoute(ipv4: .tunnel("utun4"), ipv6: .missing))
     let ip = "203.0.113.42"
     let aws = AddressCheckResult(source: BuiltInAddressSource.aws.source, outcome: .address(ip))
     let cloudflare = BuiltInAddressSource.cloudflare.source
     #expect(route.verify([]) == .insufficientIPv4)
-    #expect(route.verify([aws, aws]) == .insufficientIPv4)
-    #expect(route.verify([aws, .init(source: cloudflare, outcome: .unavailable)]) == .insufficientIPv4)
+    #expect(route.verify([aws]) == .confirmed([ip]))
+    #expect(route.verify([.init(source: cloudflare, outcome: .unavailable)]) == .insufficientIPv4)
     #expect(route.verify([aws, .init(source: cloudflare, outcome: .address("203.0.113.43"))]) == .disagreement)
     let agreeing = [aws, AddressCheckResult(source: cloudflare, outcome: .address(ip))]
     #expect(route.verify(agreeing + [.init(source: BuiltInAddressSource.ipify.source, outcome: .unavailable)])
@@ -146,11 +154,6 @@ import Testing
     #expect(route.verify(agreeing + [.init(source: BuiltInAddressSource.ipify.source, outcome: .address("203.0.113.43"))])
             == .disagreement)
 
-    var settings = AddressSourceSettings()
-    let added = settings.add("https://checkip.amazonaws.com/second-path")
-    #expect(added)
-    let sameHost = try #require(settings.enabledSources.last)
-    #expect(route.verify([aws, .init(source: sameHost, outcome: .address(ip))]) == .insufficientIPv4)
 }
 
 @Test func classifiesDNSRoutesAndPreservesUncertaintyForLocalStubs() {
@@ -171,23 +174,15 @@ import Testing
     #expect(DNSRoute(connection: wifi, routes: []) == .unknown)
 }
 
-@Test func standardSourcesCanConfirmIPv4WhileAWSIsUnavailable() throws {
+@Test func migratingStandardSourcesSelectsIpifyAndRespectsDisabledSources() throws {
     let decoder = JSONDecoder()
     var settings = try decoder.decode(AddressSourceSettings.self, from: Data(#"{"enabledBuiltIns":["aws","cloudflare","identIPv6","ipifyIPv6"],"customURLs":[]}"#.utf8))
     settings.migrateIPv4Backup()
-    #expect(settings.enabledBuiltIns.contains(.ipify))
-    let route = try #require(TrustedRoute(ipv4: .other("en0"), ipv6: .missing))
-    let ip = "203.0.113.42"
-    let results: [AddressCheckResult] = [
-        .init(source: BuiltInAddressSource.aws.source, outcome: .unavailable),
-        .init(source: BuiltInAddressSource.cloudflare.source, outcome: .address(ip)),
-        .init(source: BuiltInAddressSource.ipify.source, outcome: .address(ip)),
-    ]
-    #expect(route.verify(results) == .confirmed([ip]))
+    #expect(settings.selectedSources(includeIPv6: true).map(\.name) == ["ipify", "ipify · IPv6"])
     settings.enabledBuiltIns.remove(.ipify)
     settings = try decoder.decode(AddressSourceSettings.self, from: JSONEncoder().encode(settings))
     settings.migrateIPv4Backup()
-    #expect(!settings.enabledBuiltIns.contains(.ipify))
+    #expect(settings.selectedSources(includeIPv6: false).map(\.name) == ["Cloudflare"])
 }
 
 @Test func migratesStandardAddressSourcesWithoutChangingCustomOnlyConfiguration() throws {

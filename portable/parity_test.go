@@ -309,20 +309,20 @@ func TestWatcherReleasesOwnedPauseThenRechecksWhenSuspensionExpires(t *testing.T
 	}
 }
 
-func TestConsensusRequiresDistinctHostsAndRejectsDisagreement(t *testing.T) {
-	probes := []probe{
-		{Name: "AWS", IP: "203.0.113.42", host: "example.com"},
-		{Name: "Same host", IP: "203.0.113.42", host: "example.com"},
+func TestSingleAddressPerFamilyIsEnough(t *testing.T) {
+	probes := []probe{{Name: "ipify", IP: "203.0.113.42"}}
+	if ips, err := verifiedAddresses(probes, false); err != nil || len(ips) != 1 {
+		t.Fatalf("single IPv4 was rejected: %v %v", ips, err)
 	}
-	if _, err := consensus(probes, false); err == nil {
-		t.Fatal("two paths on one source counted as independent")
+	if _, err := verifiedAddresses(probes, true); err == nil {
+		t.Fatal("accepted a missing IPv6 reply on a dual-stack route")
 	}
-	probes = append(probes, probe{Name: "Other", IP: "203.0.113.42", host: "other.example"})
-	if ips, err := consensus(probes, false); err != nil || len(ips) != 1 {
-		t.Fatalf("agreement was rejected: %v %v", ips, err)
+	probes = append(probes, probe{Name: "ipify IPv6", IP: "2001:db8::42", ipv6: true})
+	if ips, err := verifiedAddresses(probes, true); err != nil || len(ips) != 2 {
+		t.Fatalf("single reply per family was rejected: %v %v", ips, err)
 	}
-	probes = append(probes, probe{Name: "Disagrees", IP: "203.0.113.43", host: "third.example"})
-	if _, err := consensus(probes, false); err == nil {
+	probes = append(probes, probe{Name: "Disagrees", IP: "203.0.113.43"})
+	if _, err := verifiedAddresses(probes, false); err == nil {
 		t.Fatal("accepted disagreeing providers")
 	}
 }

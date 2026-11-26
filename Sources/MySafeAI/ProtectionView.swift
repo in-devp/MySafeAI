@@ -327,8 +327,8 @@ struct ProtectionActions: View {
     let model: MonitorModel
 
     private var setupHint: String {
-        if model.addressSettings.enabledSources.isEmpty {
-            return L10n.text("Включите два источника проверки IP в настройках.")
+        if model.addressSettings.selectedSources(includeIPv6: false).isEmpty {
+            return L10n.text("Включите источник IPv4 в настройках.")
         }
         if !model.protection.hasTargets {
             return L10n.text("Защита будет действовать для команд mysafeai run.")
@@ -401,9 +401,9 @@ struct VPNAddressApproval: View {
             case .unsafeIPv6:
                 Label(L10n.text("Маршрут IPv6 не подтверждён"), systemImage: "exclamationmark.circle")
             case .unverifiedIPv6:
-                Label(L10n.text("Два источника должны подтвердить IPv6"), systemImage: "exclamationmark.circle")
+                Label(L10n.text("Источник не подтвердил IPv6"), systemImage: "exclamationmark.circle")
             case .unavailable:
-                Label(L10n.text("Два источника должны подтвердить IP"), systemImage: "exclamationmark.circle")
+                Label(L10n.text("Источник не подтвердил IP"), systemImage: "exclamationmark.circle")
             case .disagreement:
                 Label(L10n.text("Сервисы проверки видят разные IP"), systemImage: "exclamationmark.circle")
             case .serviceUnverified:

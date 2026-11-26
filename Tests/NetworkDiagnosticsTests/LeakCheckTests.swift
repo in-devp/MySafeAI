@@ -3,9 +3,7 @@ import NetworkDiagnostics
 import Testing
 
 private func checks(_ ip: String, proxy: Bool = false) -> [AddressCheckResult] {
-    [BuiltInAddressSource.aws, .cloudflare].map {
-        .init(source: $0.source, outcome: .address(ip), usedProxy: proxy)
-    }
+    [.init(source: BuiltInAddressSource.ipify.source, outcome: .address(ip), usedProxy: proxy)]
 }
 
 @Test func identifiesAProxyOnlyExitDespiteASuccessfulSystemCheck() throws {
@@ -33,9 +31,8 @@ private func checks(_ ip: String, proxy: Bool = false) -> [AddressCheckResult] {
 }
 
 @Test func detectsReachableIPv6OutsideTheIPv4Tunnel() {
-    let ipv6: [AddressCheckResult] = [BuiltInAddressSource.identIPv6, .ipifyIPv6].map {
-        .init(source: $0.source, outcome: .address("2001:db8::1"))
-    }
+    let ipv6 = [AddressCheckResult(source: BuiltInAddressSource.ipifyIPv6.source,
+                                   outcome: .address("2001:db8::1"))]
     let report = LeakCheckReport(
         snapshot: .init(ipv4: .tunnel("utun4"), ipv6: .other("en0"), dns: .unavailable),
         proxy: .init(modes: []), direct: checks("203.0.113.2"), system: checks("203.0.113.2"),

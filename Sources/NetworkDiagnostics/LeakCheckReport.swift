@@ -154,12 +154,12 @@ public struct LeakCheckReport: Sendable {
         let summary = AddressCheckSummary(direct)
         guard let address = summary.confirmedIPv4 else {
             return .init(id: "direct", title: L10n.text("Прямой IPv4 · CLI"), value: L10n.text("IP не подтверждён"),
-                         detail: L10n.text("Нужны совпавшие ответы двух источников. Проверьте их доступность в настройках."),
+                         detail: L10n.text("Проверьте доступность выбранного источника IP в настройках."),
                          level: summary.hasDisagreement ? .warning : .unknown)
         }
         if case .tunnel(let interface) = snapshot.ipv4 {
             return .init(id: "direct", title: L10n.text("Прямой IPv4 · CLI"), value: address,
-                         detail: L10n.text("Два источника подтвердили IP. Основной маршрут идёт через \(interface)."),
+                         detail: L10n.text("Источник подтвердил IP. Основной маршрут идёт через \(interface)."),
                          level: .good)
         }
         return .init(id: "direct", title: L10n.text("Прямой IPv4 · CLI"), value: address,
@@ -173,7 +173,7 @@ public struct LeakCheckReport: Sendable {
         let usedProxy = system.contains { $0.usedProxy == true }
         guard let address = summary.confirmedIPv4 else {
             return .init(id: "proxy", title: L10n.text("Системный путь"), value: L10n.text("IP не подтверждён"),
-                         detail: L10n.text("Системное подключение должно получить совпавшие ответы двух источников."),
+                         detail: L10n.text("Системное подключение не получило IP от выбранного источника."),
                          level: summary.hasDisagreement ? .warning : .unknown)
         }
         if let directIP, address != directIP {
@@ -208,21 +208,21 @@ public struct LeakCheckReport: Sendable {
             return .init(id: "ipv6", title: "IPv6", value: L10n.text("Источники видят разные IP"),
                          detail: L10n.text("Проверьте маршрутизацию IPv6 в VPN-клиенте."), level: .warning)
         }
-        if let address = summary.ipv6.first {
-            let sameTunnel = snapshot.ipv6 == snapshot.ipv4
-            if case .tunnel = snapshot.ipv6, sameTunnel, summary.confirmedIPv6 != nil {
+        if let address = summary.confirmedIPv6 {
+            let sameRoute = snapshot.ipv6 == snapshot.ipv4
+            if case .tunnel = snapshot.ipv6, sameRoute {
                 return .init(id: "ipv6", title: "IPv6", value: address,
-                             detail: L10n.text("Два источника подтвердили IPv6. Основной маршрут использует тот же туннель, что IPv4."),
+                             detail: L10n.text("Источник подтвердил IPv6. Основной маршрут использует тот же туннель, что IPv4."),
                              level: .good)
             }
             return .init(id: "ipv6", title: "IPv6", value: address,
-                         detail: sameTunnel ? L10n.text("Ответил один источник. Нужна независимая проверка IPv6.")
+                         detail: sameRoute ? L10n.text("IPv6 и IPv4 идут через один интерфейс без туннеля.")
                             : L10n.text("IPv6 доступен, его путь через основной VPN-туннель не подтверждён."),
-                         level: sameTunnel ? .unknown : .warning)
+                         level: sameRoute ? .info : .warning)
         }
-        if snapshot.ipv6 == .missing && ipv6.count >= 2 {
+        if snapshot.ipv6 == .missing {
             return .init(id: "ipv6", title: "IPv6", value: L10n.text("Прямой IPv6 недоступен"),
-                         detail: L10n.text("Маршрут отсутствует, обе HTTPS-проверки IPv6 не получили адрес."), level: .info)
+                         detail: L10n.text("Маршрут IPv6 отсутствует."), level: .info)
         }
         return .init(id: "ipv6", title: "IPv6", value: L10n.text("Выход не подтверждён"),
                      detail: L10n.text("Проверьте, что VPN обслуживает IPv6 или блокирует его."),

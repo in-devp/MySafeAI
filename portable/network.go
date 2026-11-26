@@ -49,7 +49,6 @@ type probe struct {
 	Name      string `json:"name"`
 	IP        string `json:"ip,omitempty"`
 	Err       string `json:"error,omitempty"`
-	host      string
 	ipv6      bool
 	usedProxy bool
 }
@@ -108,15 +107,10 @@ type provider struct {
 	v6, trace bool
 }
 
-var (
-	awsIPv4   = provider{"AWS", "https://checkip.amazonaws.com/", false, false}
-	ipifyIPv4 = provider{"ipify", "https://api.ipify.org/", false, false}
-)
-
 var providers = []provider{
-	awsIPv4,
+	{"ipify", "https://api.ipify.org/", false, false},
 	{"Cloudflare", "https://1.1.1.1/cdn-cgi/trace", false, true},
-	ipifyIPv4,
+	{"AWS", "https://checkip.amazonaws.com/", false, false},
 	{"ipify IPv6", "https://api6.ipify.org/", true, false},
 	{"ident.me IPv6", "https://6.ident.me/", true, false},
 }
@@ -127,30 +121,4 @@ func sourceNames() []string {
 		names[i] = source.name
 	}
 	return names
-}
-
-func assess(c config, probes []probe) ([]string, string) {
-	if len(probes) != 2 && len(probes) != 4 {
-		return nil, "incomplete IP checks"
-	}
-	var confirmed []string
-	for i := 0; i < len(probes); i += 2 {
-		if probes[i].IP == "" || probes[i+1].IP == "" {
-			return nil, "two independent providers must confirm each available IP family"
-		}
-		if probes[i].IP != probes[i+1].IP {
-			return nil, "IP providers disagree"
-		}
-		ip, err := netip.ParseAddr(probes[i].IP)
-		if err != nil || ip.Is4() != (i == 0) {
-			return nil, "unexpected address family"
-		}
-		confirmed = append(confirmed, ip.String())
-	}
-	for _, value := range confirmed {
-		if !c.allows(netip.MustParseAddr(value)) {
-			return confirmed, "verified IP is outside your allowlist"
-		}
-	}
-	return confirmed, ""
 }

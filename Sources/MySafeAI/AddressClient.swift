@@ -52,9 +52,9 @@ final class AddressClient: NSObject, URLSessionTaskDelegate, @unchecked Sendable
         let output = Pipe()
         curl.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
         let family = source.ipVersion.map { ["--ipv\($0)"] } ?? []
-        curl.arguments = family + [
-            "--disable", "--noproxy", "*", "--proto", "=https", "--globoff", "--silent",
-            "--max-time", "7", "--max-filesize", "4096", "--header", "Cache-Control: no-cache",
+        curl.arguments = ["--disable"] + family + [
+            "--noproxy", "*", "--proto", "=https", "--globoff", "--silent",
+            "--max-time", "5", "--max-filesize", "4096", "--header", "Cache-Control: no-cache",
             "--write-out", "\n%{http_code}\n%{remote_ip}",
             "--url", source.url.absoluteString
         ]
@@ -85,7 +85,7 @@ final class AddressClient: NSObject, URLSessionTaskDelegate, @unchecked Sendable
 
     private static func lookup(_ source: AddressSource) async throws -> (address: String, usedProxy: Bool?) {
         let delegate = AddressClient()
-        let data = try await delegate.read(source.url)
+        let data = try await delegate.read(source.url, timeout: 5)
         guard let text = String(data: data, encoding: .utf8), let address = source.parse(text) else {
             throw InvalidResponse()
         }

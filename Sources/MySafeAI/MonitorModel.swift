@@ -101,7 +101,8 @@ final class MonitorModel {
                     }
                     snapshot = result
                     lastCheck = Date.now
-                    protection.update(snapshot: result, sources: addressSettings.enabledSources, preview: panelVisible)
+                    let sources = addressSettings.selectedSources(includeIPv6: result.ipv6 != .missing)
+                    protection.update(snapshot: result, sources: sources, preview: panelVisible)
                 }
             } while needsRefresh
             checking = false
@@ -221,7 +222,7 @@ final class MonitorModel {
     }
 
     func checkAddress() {
-        let sources = addressSettings.enabledSources.filter { snapshot?.ipv6 != .missing || !$0.isIPv6Only }
+        let sources = addressSettings.selectedSources(includeIPv6: snapshot.map { $0.ipv6 != .missing } ?? false)
         guard !sources.isEmpty, !checkingAddress else { return }
         let request = UUID()
         addressRequest = request
@@ -280,7 +281,7 @@ final class MonitorModel {
         checkingTrustedNetwork = true
         trustedNetworkMessageValue = nil
         let generation = networkGeneration
-        let sources = addressSettings.enabledSources
+        let settings = addressSettings
         Task {
             defer { checkingTrustedNetwork = false }
             let snapshot = await NetworkSnapshot.read()
@@ -288,6 +289,7 @@ final class MonitorModel {
                 trustedNetworkMessageValue = "Подключитесь к этой сети с выключенным VPN и системным прокси."
                 return
             }
+            let sources = settings.selectedSources(includeIPv6: snapshot.ipv6 != .missing)
             let ips = await ConnectionPolicy.localAddresses(snapshot: snapshot, sources: sources)
             guard !ips.isEmpty, await NetworkSnapshot.read() == snapshot,
                   !SystemProxyConfiguration.read().isEnabled, generation == networkGeneration, !sleeping else {
@@ -307,12 +309,14 @@ final class MonitorModel {
         checkingLeaks = true
         leakMessageValue = nil
         leakReport = nil
-        let sources = addressSettings.enabledSources.filter { !$0.isIPv6Only }
-        let ipv6Sources = addressSettings.enabledSources.filter(\.isIPv6Only)
+        let settings = addressSettings
         let observesDNS = observesDNSExternally
         leakTask = Task {
             let before = await NetworkSnapshot.read()
             let proxy = SystemProxyConfiguration.read()
+            let selected = settings.selectedSources(includeIPv6: before.ipv6 != .missing)
+            let sources = selected.filter { !$0.isIPv6Only }
+            let ipv6Sources = selected.filter(\.isIPv6Only)
             async let direct = AddressClient.checkAll(sources, direct: true)
             async let system = AddressClient.checkAll(sources)
             async let ipv6 = AddressClient.checkAll(ipv6Sources, direct: true)

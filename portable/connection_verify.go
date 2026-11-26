@@ -47,8 +47,8 @@ func verifyTarget(ctx context.Context, c config, target string) report {
 	r.Adapter, r.IPv6, r.Mode, r.routeKey = path.adapter, path.ipv6, string(path.mode), path.key
 	var countries map[string]string
 	if path.mode == fullTunnel || path.mode == directRoute {
-		r.Probes = connectionAddressProbes(ctx, c, path)
-		r.IPs, err = consensus(r.Probes, path.ipv6)
+		r.Probes = addressProbes(ctx, c, path.adapter, path.ipv6, false)
+		r.IPs, err = verifiedAddresses(r.Probes, path.ipv6)
 	} else {
 		r.Probes, r.IPs, countries, err = probeServicePaths(ctx, path)
 	}
@@ -253,42 +253,38 @@ func probeServicePaths(ctx context.Context, path connectionPath) ([]probe, []str
 }
 
 func addressProbes(ctx context.Context, c config, adapter string, ipv6 bool, system bool) []probe {
-	pending := make([]provider, 0, len(providers)+len(c.Sources))
-	for _, p := range providers {
-		if !slices.Contains(c.DisabledSources, p.name) {
-			pending = append(pending, p)
-		}
-	}
-	for _, source := range c.Sources {
-		if p, err := source.provider(); err == nil {
-			pending = append(pending, p)
-		}
-	}
-	pending = slices.DeleteFunc(pending, func(p provider) bool { return p.v6 && !ipv6 })
-	return probeAddresses(ctx, pending, adapter, system)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	return probeAddresses(ctx, selectedAddressProviders(c, ipv6), adapter, system)
 }
 
-func connectionAddressProbes(ctx context.Context, c config, path connectionPath) []probe {
-	if len(c.Sources) != 0 || slices.Contains(c.DisabledSources, awsIPv4.name) ||
-		slices.Contains(c.DisabledSources, "Cloudflare") || slices.Contains(c.DisabledSources, ipifyIPv4.name) {
-		return addressProbes(ctx, c, path.adapter, path.ipv6, false)
+func selectedAddressProviders(c config, ipv6 bool) []provider {
+	pending := make([]provider, 0, 2)
+	families := []bool{false}
+	if ipv6 {
+		families = append(families, true)
 	}
-	backup := ipifyIPv4
-	if path.mode == directRoute {
-		backup = awsIPv4
-	}
-	c.DisabledSources = append(slices.Clone(c.DisabledSources), backup.name)
-	results := addressProbes(ctx, c, path.adapter, path.ipv6, false)
-	replies := 0
-	for _, item := range results {
-		if !item.ipv6 && item.IP != "" {
-			replies++
+	for _, v6 := range families {
+		var selected provider
+		for _, source := range c.Sources {
+			if p, err := source.provider(); err == nil && p.v6 == v6 {
+				selected = p
+				break
+			}
+		}
+		if selected.url == "" {
+			for _, p := range providers {
+				if p.v6 == v6 && !slices.Contains(c.DisabledSources, p.name) {
+					selected = p
+					break
+				}
+			}
+		}
+		if selected.url != "" {
+			pending = append(pending, selected)
 		}
 	}
-	if replies < 2 && ctx.Err() == nil {
-		results = append(results, probeAddresses(ctx, []provider{backup}, path.adapter, false)...)
-	}
-	return results
+	return pending
 }
 
 func probeAddresses(ctx context.Context, pending []provider, adapter string, system bool) []probe {
@@ -300,7 +296,7 @@ func probeAddresses(ctx context.Context, pending []provider, adapter string, sys
 	for index, p := range pending {
 		go func() {
 			endpoint, _ := url.Parse(p.url)
-			item := probe{Name: p.name, host: strings.TrimSuffix(strings.ToLower(endpoint.Hostname()), "."), ipv6: p.v6}
+			item := probe{Name: p.name, ipv6: p.v6}
 			var proxy *url.URL
 			var err error
 			if system {
@@ -328,7 +324,7 @@ func probeAddresses(ctx context.Context, pending []provider, adapter string, sys
 	return replies
 }
 
-func consensus(probes []probe, ipv6 bool) ([]string, error) {
+func verifiedAddresses(probes []probe, ipv6 bool) ([]string, error) {
 	var addresses []string
 	families := []bool{false}
 	if ipv6 {
@@ -336,7 +332,6 @@ func consensus(probes []probe, ipv6 bool) ([]string, error) {
 	}
 	for _, family := range families {
 		var address string
-		hosts := make(map[string]bool)
 		for _, p := range probes {
 			if p.ipv6 != family || p.IP == "" {
 				continue
@@ -345,10 +340,12 @@ func consensus(probes []probe, ipv6 bool) ([]string, error) {
 				return nil, errors.New("IP providers disagree")
 			}
 			address = p.IP
-			hosts[p.host] = true
 		}
-		if len(hosts) < 2 {
-			return nil, errors.New("two independent providers must confirm each available IP family")
+		if address == "" {
+			if family {
+				return nil, errors.New("the IP source did not confirm IPv6")
+			}
+			return nil, errors.New("the IP source did not confirm IPv4")
 		}
 		addresses = append(addresses, address)
 	}

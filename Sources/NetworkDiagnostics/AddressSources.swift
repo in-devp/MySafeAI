@@ -1,12 +1,12 @@
 import Foundation
 
 public enum BuiltInAddressSource: String, CaseIterable, Codable, Sendable {
-    case aws
-    case cloudflare
     case ipify
+    case cloudflare
+    case aws
     case ipinfo
-    case identIPv6
     case ipifyIPv6
+    case identIPv6
 
     public var source: AddressSource {
         switch self {
@@ -41,7 +41,6 @@ public struct AddressSource: Identifiable, Sendable {
     }
 
     public var id: URL { url }
-    var provider: String { url.host?.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")) ?? "" }
 
     public func parse(_ body: String) -> String? {
         let address = isTrace ? AddressEcho.parseTrace(body) : AddressEcho.parse(body)
@@ -87,9 +86,19 @@ public struct AddressSourceSettings: Codable, Sendable {
         let builtIns = BuiltInAddressSource.allCases.filter { enabledBuiltIns.contains($0) }.map(\.source)
         let custom = customURLs.compactMap { saved -> AddressSource? in
             guard let url = AddressEcho.endpoint(saved.absoluteString) else { return nil }
-            return AddressSource(name: url.host ?? url.absoluteString, url: url)
+            return AddressSource(name: url.host ?? url.absoluteString, url: url,
+                                 ipVersion: url.host?.contains(":") == true ? 6 : 4)
         }
-        return builtIns + custom
+        return custom + builtIns
+    }
+
+    public func selectedSources(includeIPv6: Bool) -> [AddressSource] {
+        let sources = enabledSources
+        var selected = [sources.first { !$0.isIPv6Only }].compactMap { $0 }
+        if includeIPv6, let source = sources.first(where: \.isIPv6Only) {
+            selected.append(source)
+        }
+        return selected
     }
 
     public func canAdd(_ input: String) -> Bool {
@@ -138,31 +147,23 @@ public struct AddressCheckSummary {
     public let responseCount: Int
     public let ipv4: Set<String>
     public let ipv6: Set<String>
-    public let ipv4SourceCount: Int
-    public let ipv6SourceCount: Int
 
     public init(_ results: [AddressCheckResult]) {
         var v4: Set<String> = []
         var v6: Set<String> = []
-        var v4Providers: Set<String> = []
-        var v6Providers: Set<String> = []
         var count = 0
         for result in results {
             guard case .address(let address) = result.outcome else { continue }
             count += 1
             if address.contains(":") {
                 v6.insert(address)
-                v6Providers.insert(result.source.provider)
             } else {
                 v4.insert(address)
-                v4Providers.insert(result.source.provider)
             }
         }
         responseCount = count
         ipv4 = v4
         ipv6 = v6
-        ipv4SourceCount = v4Providers.count
-        ipv6SourceCount = v6Providers.count
     }
 
     public var hasDisagreement: Bool {
@@ -174,6 +175,6 @@ public struct AddressCheckSummary {
         return ipv4.first ?? ipv6.first
     }
 
-    public var confirmedIPv4: String? { ipv4.count == 1 && ipv4SourceCount >= 2 ? ipv4.first : nil }
-    public var confirmedIPv6: String? { ipv6.count == 1 && ipv6SourceCount >= 2 ? ipv6.first : nil }
+    public var confirmedIPv4: String? { ipv4.count == 1 ? ipv4.first : nil }
+    public var confirmedIPv6: String? { ipv6.count == 1 ? ipv6.first : nil }
 }

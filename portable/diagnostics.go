@@ -95,11 +95,21 @@ func diagnoseLeaks(ctx context.Context, c config) leakDiagnostics {
 	changes := connectionEvents(ctx)
 	result := leakDiagnostics{Proxy: "unknown", ExternalDNS: dnsObservation{Status: "disabled"}}
 	var wait sync.WaitGroup
-	wait.Go(func() { result.Direct = addressProbes(ctx, c, "", true, false) })
+	wait.Go(func() {
+		probeIPv6 := false
+		for _, address := range anchors6 {
+			adapter, err := routeFor(ctx, address)
+			probeIPv6 = probeIPv6 || !errors.Is(err, noRoute)
+			if err == nil {
+				result.IPv6Adapter = adapter
+				break
+			}
+		}
+		result.Direct = addressProbes(ctx, c, "", probeIPv6, false)
+	})
 	wait.Go(func() { result.System = addressProbes(ctx, c, "", false, true) })
 	wait.Go(func() {
 		result.IPv4Adapter, _ = routeFor(ctx, anchors4[0])
-		result.IPv6Adapter, _ = routeFor(ctx, anchors6[0])
 		adapter := c.Adapter
 		if adapter == "" {
 			adapter = automaticAdapter(ctx)

@@ -1,26 +1,36 @@
 package main
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
-func TestRequiresConsistentAndAllowedAddressesForBothFamilies(t *testing.T) {
-	c := config{Adapter: "vpn", Allowed: []string{"203.0.113.0/24", "2001:db8::/48"}}
-	ipv4 := []probe{{IP: "203.0.113.42"}, {IP: "203.0.113.42"}}
-	ipv6 := []probe{{IP: "2001:db8::1"}, {IP: "2001:db8::1"}}
-	if ips, reason := assess(c, append(ipv4, ipv6...)); reason != "" || len(ips) != 2 {
-		t.Fatalf("expected two approved addresses, got %v (%s)", ips, reason)
+func TestSelectsOneIPProviderPerAvailableFamily(t *testing.T) {
+	custom := []sourcePreference{
+		{Name: "Custom v4", URL: "https://example.com/ip"},
+		{Name: "Second v4", URL: "https://example.net/ip"},
+		{Name: "Custom v6", URL: "https://ipv6.example.com/ip", IPv6: true},
 	}
-	for _, item := range []struct {
+	for _, tc := range []struct {
 		name   string
-		probes []probe
+		config config
+		ipv6   bool
+		want   []string
 	}{
-		{"missing peer", []probe{{IP: "203.0.113.42"}, {}}},
-		{"different replies", []probe{{IP: "203.0.113.42"}, {IP: "203.0.113.43"}}},
-		{"outside rule", []probe{{IP: "192.0.2.5"}, {IP: "192.0.2.5"}}},
-		{"unconfirmed IPv6", append(ipv4, ipv6[0], probe{})},
+		{name: "default IPv4", want: []string{"ipify"}},
+		{name: "default dual stack", ipv6: true, want: []string{"ipify", "ipify IPv6"}},
+		{name: "custom source takes priority", config: config{Sources: custom}, ipv6: true, want: []string{"Custom v4", "Custom v6"}},
+		{name: "IPv4 only skips custom IPv6", config: config{Sources: custom}, want: []string{"Custom v4"}},
+		{name: "respects disabled sources", config: config{DisabledSources: []string{"ipify", "ipify IPv6"}}, ipv6: true, want: []string{"Cloudflare", "ident.me IPv6"}},
+		{name: "all built-ins disabled", config: config{DisabledSources: sourceNames()}, ipv6: true},
 	} {
-		t.Run(item.name, func(t *testing.T) {
-			if _, reason := assess(c, item.probes); reason == "" {
-				t.Fatal("unexpectedly trusted")
+		t.Run(tc.name, func(t *testing.T) {
+			var names []string
+			for _, source := range selectedAddressProviders(tc.config, tc.ipv6) {
+				names = append(names, source.name)
+			}
+			if !slices.Equal(names, tc.want) {
+				t.Fatalf("got %v, want %v", names, tc.want)
 			}
 		})
 	}

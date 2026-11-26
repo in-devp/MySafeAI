@@ -676,7 +676,7 @@ private struct AddressSettings: View {
                     .help(provider.source.url.absoluteString)
                 }
             } hint: {
-                Text(L10n.text("Защита сверяет IP у двух источников. Включённые сервисы видят IP входящего запроса."))
+                Text(L10n.text("На каждую версию IP используется один источник. Первый свой источник имеет приоритет, иначе используется первый включённый в списке."))
             }
 
             section(L10n.text("Внешняя проверка DNS")) {

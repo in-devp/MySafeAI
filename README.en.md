@@ -21,7 +21,7 @@ Browser extensions: [Chrome / Edge / Brave / Chromium](https://github.com/in-dev
 
 ## How it works
 
-- **Approve your connection.** At least two independent IP services verify the public address, on a VPN or direct Wi-Fi/Ethernet connection. New direct addresses require separate approval.
+- **Approve your connection.** One HTTPS source per available IP version checks the public address on a VPN or direct Wi-Fi/Ethernet connection. The default service is ipify. New direct addresses require separate approval.
 - **Pause, then resume.** Selected Codex CLI, Claude Code, Cursor, desktop apps and their child processes pause while the connection is untrusted, then resume after verification. `mysafeai run -- codex` checks the connection before starting a command.
 - **Protect websites.** The browser extension blocks new requests to selected AI domains, including your own domains. Other sites keep working. Open protected tabs move to a local pause page when access is revoked. [Setup and limitations](docs/browser-extension.en.md).
 - **Choose a policy.** App-specific IP/CIDR/country rules, trusted local networks, VPN-only routes, service route checks, and system proxy/PAC diagnostics are available.
