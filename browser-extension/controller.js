@@ -44,19 +44,25 @@
     }
     syncRules(force = false) {
       this.queue = this.queue.catch(() => {}).then(async () => {
-        const signature = JSON.stringify([this.selected, this.custom, this.state.allowed]);
+        const { selected, custom } = this;
+        const signature = JSON.stringify([selected, custom, this.state.allowed && this.isFresh()]);
         if (!force && signature === this.applied) return;
         await this.api.declarativeNetRequest.updateSessionRules({ removeRuleIds: policy.sessionIDs });
         await this.api.declarativeNetRequest.updateDynamicRules({
-          removeRuleIds: policy.dynamicIDs, addRules: [...policy.excludedRules(this.selected), ...policy.customBlockRules(this.custom)],
+          removeRuleIds: policy.dynamicIDs, addRules: [...policy.excludedRules(selected), ...policy.customBlockRules(custom)],
         });
         // Desired state may have changed while the browser was applying a rule update.
-        if (this.state.allowed && this.isFresh()) {
+        let allowed = this.state.allowed && this.isFresh();
+        if (allowed) {
           await this.api.declarativeNetRequest.updateSessionRules({
-            removeRuleIds: policy.sessionIDs, addRules: [...policy.trustedRules(this.selected), ...policy.customAllowRules(this.custom)],
+            removeRuleIds: policy.sessionIDs, addRules: [...policy.trustedRules(selected), ...policy.customAllowRules(custom)],
           });
+          if (!this.state.allowed || !this.isFresh()) {
+            await this.api.declarativeNetRequest.updateSessionRules({ removeRuleIds: policy.sessionIDs });
+            allowed = false;
+          }
         }
-        this.applied = JSON.stringify([this.selected, this.custom, this.state.allowed && this.isFresh()]);
+        this.applied = JSON.stringify([selected, custom, allowed]);
         this.rulesHealthy = true;
         if (!this.state.allowed) await this.pauseTabs();
         await this.badge();

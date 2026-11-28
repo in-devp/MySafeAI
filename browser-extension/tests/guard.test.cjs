@@ -180,6 +180,28 @@ test('an in-flight grant is revoked if native disconnects while the browser appl
   assert.equal(f.session.size, 0);
   assert.equal(f.guard.snapshot().allowed, false);
 });
+test('a native denial revokes a grant that is still being applied', async () => {
+  const f = fixture();
+  await f.guard.start();
+  const started = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const update = f.api.declarativeNetRequest.updateSessionRules;
+  f.api.declarativeNetRequest.updateSessionRules = async args => {
+    if (args.addRules?.length) {
+      started.resolve();
+      await release.promise;
+    }
+    await update(args);
+  };
+  const granted = f.reply();
+  await started.promise;
+  f.guard.request();
+  const denied = f.reply({ protocol: 1, state: 'blocked', allowed: false, reason: 'network changed' });
+  release.resolve();
+  await Promise.all([granted, denied]);
+  assert.equal(f.guard.snapshot().allowed, false);
+  assert.equal(f.session.size, 0);
+});
 test('manual recheck does not unload trusted AI tabs', async () => {
   const f = fixture(); await f.guard.start(); await f.reply();
   f.tabMap.set(5, { id: 5, url: 'https://chatgpt.com/' });
