@@ -3,6 +3,7 @@ import NetworkDiagnostics
 
 final class AddressClient: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private struct InvalidResponse: Error {}
+    struct TransportFailure: Error {}
     // Each delegate belongs to one request. Delegate callbacks and the reader share this value.
     private let metricLock = NSLock()
     private var usedProxy: Bool?
@@ -28,7 +29,7 @@ final class AddressClient: NSObject, URLSessionTaskDelegate, @unchecked Sendable
         do {
             try Task.checkCancellation()
             if direct {
-                let result = try lookupDirect(source)
+                let result = try retryDirectLookup { try lookupDirect(source, timeout: $0) }
                 if let requiredRoute, await NetworkSnapshot.route(to: result.peer) != requiredRoute {
                     throw URLError(.cannotConnectToHost)
                 }
@@ -47,14 +48,23 @@ final class AddressClient: NSObject, URLSessionTaskDelegate, @unchecked Sendable
         return AddressCheckResult(source: source, outcome: outcome, usedProxy: usedProxy)
     }
 
-    private static func lookupDirect(_ source: AddressSource) throws -> (address: String, peer: String) {
+    static func retryDirectLookup<Value>(_ lookup: (Int) throws -> Value) throws -> Value {
+        try Task.checkCancellation()
+        do { return try lookup(2) }
+        catch is TransportFailure {
+            try Task.checkCancellation()
+            return try lookup(5)
+        }
+    }
+
+    private static func lookupDirect(_ source: AddressSource, timeout: Int) throws -> (address: String, peer: String) {
         let curl = Process()
         let output = Pipe()
         curl.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
         let family = source.ipVersion.map { ["--ipv\($0)"] } ?? []
         curl.arguments = ["--disable"] + family + [
             "--noproxy", "*", "--proto", "=https", "--globoff", "--silent",
-            "--max-time", "5", "--max-filesize", "4096", "--header", "Cache-Control: no-cache",
+            "--max-time", String(timeout), "--max-filesize", "4096", "--header", "Cache-Control: no-cache",
             "--write-out", "\n%{http_code}\n%{remote_ip}",
             "--url", source.url.absoluteString
         ]
@@ -75,7 +85,12 @@ final class AddressClient: NSObject, URLSessionTaskDelegate, @unchecked Sendable
             data.append(chunk)
         }
         curl.waitUntilExit()
-        guard curl.terminationStatus == 0 else { throw URLError(.cannotConnectToHost) }
+        switch curl.terminationStatus {
+        case 0: break
+        // DNS, connect, partial reply, timeout, empty reply, send/receive and HTTP/2 stream failures.
+        case 6, 7, 18, 28, 52, 55, 56, 92: throw TransportFailure()
+        default: throw URLError(.cannotConnectToHost)
+        }
         guard let text = String(data: data, encoding: .utf8), let separator = text.lastIndex(of: "\n"),
               let peer = AddressEcho.parse(String(text[text.index(after: separator)...])),
               text[..<separator].hasSuffix("\n200"),

@@ -10,6 +10,6 @@ let package = Package(
     targets: [
         .target(name: "NetworkDiagnostics", resources: [.process("Resources")]),
         .executableTarget(name: "MySafeAI", dependencies: ["NetworkDiagnostics"]),
-        .testTarget(name: "NetworkDiagnosticsTests", dependencies: ["NetworkDiagnostics"])
+        .testTarget(name: "NetworkDiagnosticsTests", dependencies: ["NetworkDiagnostics", "MySafeAI"])
     ]
 )

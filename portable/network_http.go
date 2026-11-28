@@ -10,7 +10,10 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"time"
 )
+
+var errHTTPSTransport = errors.New("HTTPS request failed")
 
 func fetchHTTPS(ctx context.Context, endpoint string, family string, adapter string, proxy *url.URL, limit int64) ([]byte, error) {
 	transport := &http.Transport{DisableKeepAlives: true}
@@ -63,14 +66,17 @@ func fetchHTTPS(ctx context.Context, endpoint string, family string, adapter str
 	response, err := client.Do(request)
 	if err != nil {
 		// An HTTP proxy URL may carry credentials. Never put it in the local journal or UI.
-		return nil, errors.New("HTTPS request failed")
+		return nil, errHTTPSTransport
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("HTTP %d", response.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, limit+1))
-	if err != nil || int64(len(data)) > limit {
+	if err != nil {
+		return nil, errHTTPSTransport
+	}
+	if int64(len(data)) > limit {
 		return nil, errors.New("invalid provider response")
 	}
 	return data, nil
@@ -86,7 +92,9 @@ func queryVia(ctx context.Context, p provider, adapter string, proxy *url.URL) (
 	if p.v6 {
 		family = "6"
 	}
-	data, err := fetchHTTPS(ctx, p.url, family, adapter, proxy, 4096)
+	data, err := retryAddressRequest(ctx, func(ctx context.Context) ([]byte, error) {
+		return fetchHTTPS(ctx, p.url, family, adapter, proxy, 4096)
+	})
 	if err != nil {
 		return netip.Addr{}, err
 	}
@@ -102,6 +110,16 @@ func queryVia(ctx context.Context, p provider, adapter string, proxy *url.URL) (
 		err = errors.New("unexpected address family")
 	}
 	return ip, err
+}
+
+func retryAddressRequest(ctx context.Context, fetch func(context.Context) ([]byte, error)) ([]byte, error) {
+	attempt, stop := context.WithTimeout(ctx, 2*time.Second)
+	data, err := fetch(attempt)
+	stop()
+	if errors.Is(err, errHTTPSTransport) && ctx.Err() == nil {
+		return fetch(ctx)
+	}
+	return data, err
 }
 
 func parsePublicAddress(value string) (netip.Addr, error) {

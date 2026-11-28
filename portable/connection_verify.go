@@ -253,7 +253,7 @@ func probeServicePaths(ctx context.Context, path connectionPath) ([]probe, []str
 }
 
 func addressProbes(ctx context.Context, c config, adapter string, ipv6 bool, system bool) []probe {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 7*time.Second)
 	defer cancel()
 	return probeAddresses(ctx, selectedAddressProviders(c, ipv6), adapter, system)
 }
