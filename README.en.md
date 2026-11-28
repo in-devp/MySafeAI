@@ -1,7 +1,7 @@
 <p align="center"><img src="docs/screenshots/logo.png" alt="MySafeAI" width="110"></p>
 <h1 align="center">MySafeAI</h1>
 <p align="center"><strong>Local protection for AI apps and websites</strong><br>Verify your connection, pause selected apps, and protect AI sites without freezing your browser.</p>
-<p align="center"><a href="README.md">Русский</a> · English · <a href="https://github.com/in-devp/MySafeAI/releases/latest">Download</a> · <a href="docs/browser-extension.en.md">Browser setup</a> · <a href="https://pay.oxapay.com/10596841">Donate</a></p>
+<p align="center"><a href="README.md">Русский</a> · English · <a href="https://github.com/in-devp/MySafeAI/releases/latest">Download</a> · <a href="docs/browser-extension.en.md">Browser setup</a> · <a href="https://go.payred.io/d/16fa8e70c3da3d4586d39b8f820b4e928f7275ccfc255b33">Donate</a></p>
 
 MySafeAI is free, open source, and runs locally. No account or hosted control service is required. Both Russian and English are available in the application and browser extension settings.
 
@@ -27,7 +27,7 @@ Browser extensions: [Chrome / Edge / Brave / Chromium](https://github.com/in-dev
 - **Choose a policy.** App-specific IP/CIDR/country rules, trusted local networks, VPN-only routes, service route checks, and system proxy/PAC diagnostics are available.
 - **Stay in control.** Disable protection without quitting, pause it for 15 minutes, use tray-only mode, and review the local event log. IP, IPv6 and DNS diagnostics are built in; the external bash.ws DNS test is optional.
 
-MySafeAI does not create a VPN or change system routing. Process suspension and browser request filtering are **not an operating-system packet firewall**. For a strict no-packets-outside-the-VPN requirement, enable your VPN client's kill switch. Already queued packets, WebRTC and some existing browser streams are outside the extension's guarantees. A crashed extension worker can retain a session allow rule until the browser restarts it. Navigating to a pause page can discard unsaved site input.
+MySafeAI does not create a VPN or change system routing. Process suspension and browser request filtering are **not an operating-system packet firewall**. For a strict no-packets-outside-the-VPN requirement, enable your VPN client's kill switch. WebRTC is outside the scope of both leak diagnostics and browser request blocking. Already queued packets and some existing browser streams are outside the extension's guarantees. A crashed extension worker can retain a session allow rule until the browser restarts it. Navigating to a pause page can discard unsaved site input.
 
 ## Install
 
@@ -61,4 +61,4 @@ node --test browser-extension/tests/*.test.cjs
 node browser-extension/package.mjs dist/browser-extension
 ```
 
-The project is distributed under the [MIT license](LICENSE). [Donate through OxaPay](https://pay.oxapay.com/10596841) or [report an issue](https://github.com/in-devp/MySafeAI/issues/new).
+The project is distributed under the [MIT license](LICENSE). [Donate through PayRed](https://go.payred.io/d/16fa8e70c3da3d4586d39b8f820b4e928f7275ccfc255b33) or [report an issue](https://github.com/in-devp/MySafeAI/issues/new).
